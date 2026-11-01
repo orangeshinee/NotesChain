@@ -25,6 +25,8 @@ pub struct Runtime {
 pub struct Git {
     pub root: PathBuf,
     pub available: bool,
+    /// 用户用 `--no-git` 主动关闭（与「没有装 git」区分开）
+    pub disabled_by_user: bool,
     pub repo_root: Option<PathBuf>,
     tx: Option<mpsc::Sender<()>>,
     runtime: Arc<Mutex<Runtime>>,
@@ -33,6 +35,7 @@ pub struct Git {
 #[derive(Debug, Serialize)]
 pub struct GitStatus {
     pub available: bool,
+    pub disabled_by_user: bool,
     pub is_repo: bool,
     pub repo_root: Option<String>,
     pub last_commit: Option<String>,
@@ -44,7 +47,17 @@ pub struct GitStatus {
 
 impl Git {
     /// 启动检测 + 自动 init + 起提交协程。
-    pub fn start(root: PathBuf) -> Arc<Git> {
+    pub fn start(root: PathBuf, enabled: bool) -> Arc<Git> {
+        if !enabled {
+            return Arc::new(Git {
+                root,
+                available: false,
+                disabled_by_user: true,
+                repo_root: None,
+                tx: None,
+                runtime: Arc::new(Mutex::new(Runtime::default())),
+            });
+        }
         let available = git_available();
         let mut repo_root = if available { find_repo_root(&root) } else { None };
 
@@ -82,6 +95,7 @@ impl Git {
         Arc::new(Git {
             root,
             available,
+            disabled_by_user: false,
             repo_root,
             tx: Some(tx),
             runtime,
@@ -107,6 +121,7 @@ impl Git {
         };
         GitStatus {
             available: self.available,
+            disabled_by_user: self.disabled_by_user,
             is_repo: self.repo_root.is_some(),
             repo_root: self.repo_root.as_ref().map(|p| p.display().to_string()),
             last_commit: rt.last_commit.clone(),

@@ -1323,7 +1323,7 @@ function setGit(git) {
     return;
   }
   if (!git.available) {
-    box.textContent = '未检测到 git';
+    box.textContent = git.disabled_by_user ? '版本历史已关闭' : '未检测到 git';
     return;
   }
   const parts = [];

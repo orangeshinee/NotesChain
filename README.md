@@ -43,6 +43,8 @@ npm run build      # 输出 web/dist/editor.js，编译期内嵌进二进制
 
 ## 运行
 
+> 需要在自己机器上做一次完整验收，照着 [docs/verify.md](docs/verify.md) 走即可。
+
 ```powershell
 cargo run -- --dir D:\notes --port 8080
 ```

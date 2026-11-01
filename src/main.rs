@@ -30,12 +30,16 @@ struct Args {
     /// 启用双链 [[目标]]（实验性，PRD 3.5 默认关闭）
     #[arg(long, default_value_t = false)]
     links: bool,
+
+    /// 关闭 Git 自动提交（PRD 6.4：同步盘等场景可单独关闭，其余功能保留）
+    #[arg(long, default_value_t = false)]
+    no_git: bool,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let state = state::AppState::new(args.dir, args.links)?;
+    let state = state::AppState::new(args.dir, args.links, !args.no_git)?;
 
     let warnings = state.rebuild_index().await?;
     watch::start(state.clone());

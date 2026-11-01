@@ -28,7 +28,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(root: PathBuf, links: bool) -> anyhow::Result<Arc<Self>> {
+    pub fn new(root: PathBuf, links: bool, git_enabled: bool) -> anyhow::Result<Arc<Self>> {
         let root = root
             .canonicalize()
             .with_context(|| format!("笔记目录不可访问: {}", root.display()))?;
@@ -38,7 +38,7 @@ impl AppState {
         if !root.is_dir() {
             anyhow::bail!("笔记目录不是目录: {}", root.display());
         }
-        let git = Git::start(root.clone());
+        let git = Git::start(root.clone(), git_enabled);
         Ok(Arc::new(AppState {
             root,
             token: new_token(),
@@ -132,7 +132,7 @@ mod tests {
     use super::*;
 
     fn state_for(dir: &Path) -> Arc<AppState> {
-        AppState::new(dir.to_path_buf(), false).unwrap()
+        AppState::new(dir.to_path_buf(), false, true).unwrap()
     }
 
     #[test]
