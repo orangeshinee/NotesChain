@@ -429,6 +429,13 @@ function buildSchedule(data) {
       for (const entry of decorated) {
         const item = entry.item;
         const li = el('li', entry.status);
+        if (day.path) {
+          li.style.cursor = 'pointer';
+          li.title = '打开 ' + day.path + ' 第 ' + item.line + ' 行';
+          li.addEventListener('click', () =>
+            go('/file/' + encodeURIComponent(day.path) + '@' + item.line)
+          );
+        }
         const time = item.end ? `${item.start}–${item.end}` : item.start;
         li.append(el('span', 'time', time));
         if (entry.status === 'live') li.append(el('span', 'live-pill', '进行中'));
@@ -798,6 +805,21 @@ async function showFile(path, line) {
     }
   });
   head.append(previewBtn);
+
+  const exportBtn = el('button', 'seg', '导出 PDF');
+  exportBtn.type = 'button';
+  exportBtn.title = '切到渲染视图并调用浏览器打印（可选「另存为 PDF」）';
+  exportBtn.addEventListener('click', () => {
+    if (!state.previewMode) {
+      state.previewMode = true;
+      article.replaceChildren(...renderPreviewNodes(currentEditor ? currentEditor.getValue() : data.content, path));
+      article.hidden = false;
+      host.hidden = true;
+      previewBtn.textContent = '编辑';
+    }
+    window.print();
+  });
+  head.append(exportBtn);
 
   main.replaceChildren(head, layout);
   renderOutline(outline, data.content);

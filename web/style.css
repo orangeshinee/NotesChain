@@ -990,3 +990,17 @@ table.todos tr.sentinel td { height: 1px; padding: 0; border: none; }
 .quick-add::placeholder { color: var(--faint); }
 .quick-add:focus { border-style: solid; border-color: var(--accent); }
 .quick-add:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 打印 / 导出 PDF */
+@media print {
+  .sidebar, .sidebar-toggle, .backdrop, .doc-head, .outline,
+  .backlinks, .quick-add-row, .conflict-bar, .modal-mask { display: none !important; }
+  .app { display: block; height: auto; overflow: visible; }
+  .main { overflow: visible; height: auto; }
+  .file-layout { display: block; }
+  .wrap { padding: 0; max-width: none; }
+  .doc.preview { font-size: 12pt; }
+  .doc.preview .preview-img { max-height: 60vh; }
+  body { background: #fff; color: #000; }
+}
+@page { margin: 16mm; }

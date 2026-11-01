@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedjump", "export", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [int]$DebugPort = 9333
@@ -265,6 +265,48 @@ try {
     $id++
     $check = Eval-Js $ws "JSON.stringify({ filled: '$filled', added: !!Array.from(document.querySelectorAll('table.todos .text')).find((e) => e.textContent.includes('探针加的待办')), total: document.querySelector('.doc-head .right')?.textContent || '' })" ([ref]$id)
     $results += "quickadd => " + $check
+  }
+
+  if (& $want "schedjump") {
+    Reload-Page $ws ($Url + "#/") ([ref]$id)
+    $id++
+    $js = @'
+(async () => {
+  const li = Array.from(document.querySelectorAll('.slots li')).find((e) => e.style.cursor === 'pointer');
+  if (!li) return 'no-clickable-item';
+  const label = li.textContent.slice(0, 40);
+  li.click();
+  await new Promise((r) => setTimeout(r, 1200));
+  return JSON.stringify({
+    label,
+    hash: decodeURIComponent(location.hash).slice(0, 70),
+    title: document.querySelector('.doc-head .title')?.textContent || '',
+    selected: (window.getSelection()?.toString() || '').slice(0, 30),
+  });
+})()
+'@
+    $results += "schedjump => " + (Eval-Js $ws $js ([ref]$id))
+  }
+
+  if (& $want "export") {
+    Reload-Page $ws ($Url + $Hash) ([ref]$id)
+    $id++
+    $js = @'
+(async () => {
+  let printed = 0;
+  window.print = () => { printed += 1; };
+  const btn = Array.from(document.querySelectorAll('.doc-head .seg')).find((b) => b.textContent.trim() === '导出 PDF');
+  if (!btn) return 'no-export-button';
+  btn.click();
+  await new Promise((r) => setTimeout(r, 600));
+  return JSON.stringify({
+    printed,
+    previewVisible: !!document.querySelector('.doc.preview:not([hidden])'),
+    editorHidden: !!document.querySelector('.editor-host[hidden]'),
+  });
+})()
+'@
+    $results += "export => " + (Eval-Js $ws $js ([ref]$id))
   }
 
   if (& $want "resize") {
