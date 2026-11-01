@@ -179,6 +179,8 @@ struct FileItem {
     mtime: u64,
     size: u64,
     title: String,
+    /// 未完成待办数（文件树里显示）
+    todos: usize,
 }
 
 async fn list_files(State(st): State<Arc<AppState>>) -> Json<Value> {
@@ -194,6 +196,7 @@ async fn list_files(State(st): State<Arc<AppState>>) -> Json<Value> {
             mtime: file.mtime_ms,
             size: file.size,
             title: file.path.clone(),
+            todos: file.todos.iter().filter(|t| !t.done).count(),
         };
         match &file.diary_date {
             Some(date) => {

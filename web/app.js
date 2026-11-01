@@ -333,6 +333,11 @@ function buildSchedule(data) {
     btn.type = 'button';
     btn.addEventListener('click', () => {
       state.scheduleRange = value;
+      try {
+        localStorage.setItem('nc.scheduleRange', value);
+      } catch (err) {
+        /* ignore */
+      }
       showHome();
     });
     toggle.append(btn);
@@ -624,7 +629,11 @@ async function showFile(path, line) {
   const wrap = el('div', 'wrap');
   const host = el('div', 'editor-host');
   wrap.append(host);
-  main.replaceChildren(head, wrap);
+  const layout = el('div', 'file-layout');
+  const outline = el('aside', 'outline');
+  layout.append(wrap, outline);
+  main.replaceChildren(head, layout);
+  renderOutline(outline, data.content);
 
   const flush = async (force = false) => {
     if (!currentEditor || !dirty) return;
@@ -735,6 +744,47 @@ async function mountBacklinks(wrap, path) {
   }
 }
 
+function renderOutline(container, content) {
+  container.replaceChildren();
+  container.append(el('div', 'outline-head', '大纲'));
+
+  const lines = content.split('\n');
+  let inFence = false;
+  const items = [];
+  lines.forEach((line, index) => {
+    if (/^\s{0,3}(`{3,}|~{3,})/.test(line)) {
+      inFence = !inFence;
+      return;
+    }
+    if (inFence) return;
+    const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+    if (m) items.push({ level: m[1].length, text: m[2].replace(/[#*`]/g, '').trim(), line: index + 1 });
+  });
+
+  if (!items.length) {
+    container.append(el('div', 'outline-empty', '这篇没有标题'));
+    return;
+  }
+  for (const item of items) {
+    const link = el('a', 'outline-item level-' + item.level, item.text);
+    link.href = '#';
+    link.title = item.text;
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      jumpToLine(item.line);
+    });
+    container.append(link);
+  }
+}
+
+function jumpToLine(lineNumber) {
+  if (!currentEditor || !currentEditor.view) return;
+  const view = currentEditor.view;
+  const line = Math.min(Math.max(1, lineNumber), view.state.doc.lines);
+  const pos = view.state.doc.line(line).from;
+  view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+  view.focus();
+}
 function makeEditor(host, content, options) {
   const { onChange, onSave } = options;
   if (window.NotesChainEditor && typeof window.NotesChainEditor.create === 'function') {
@@ -968,7 +1018,7 @@ function renderFileTree(data) {
         monthBox.open = true;
       }
       for (const entry of month.entries) {
-        monthBox.append(fileLeaf(entry.path, entry.path.split('/').pop().replace(/\.md$/, '')));
+        monthBox.append(fileLeaf(entry.path, entry.path.split('/').pop().replace(/\.md$/, ''), entry.todos));
         total++;
       }
       yearBox.append(monthBox);
@@ -984,7 +1034,7 @@ function renderFileTree(data) {
     sum.append(el('span', 'n', String(notes.entries.length)));
     box.append(sum);
     for (const entry of notes.entries) {
-      box.append(fileLeaf(entry.path, entry.path.replace(/\.md$/, '')));
+      box.append(fileLeaf(entry.path, entry.path.replace(/\.md$/, ''), entry.todos));
       total++;
     }
     box.open = true;
@@ -995,9 +1045,10 @@ function renderFileTree(data) {
   document.getElementById('file-count').textContent = String(total);
 }
 
-function fileLeaf(path, label) {
+function fileLeaf(path, label, todos) {
   const leaf = el('a', 'leaf', label);
   leaf.title = path;
+  if (todos) leaf.append(el('span', 'n', String(todos)));
   leaf.addEventListener('click', () => go('/file/' + encodeURIComponent(path)));
   state.leafEls.set(path, leaf);
   return leaf;
@@ -1406,6 +1457,12 @@ document.addEventListener('click', (event) => {
 });
 async function boot() {
   try {
+    try {
+      const savedRange = localStorage.getItem('nc.scheduleRange');
+      if (savedRange) state.scheduleRange = savedRange;
+    } catch (err) {
+      /* ignore */
+    }
     const cfg = await api('/api/config').catch(() => null);
     const migration = await api('/api/migration/todo').catch(() => null);
     if (migration && migration.total && localStorage.getItem('nc.migrationDismissed') !== '1') {
