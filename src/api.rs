@@ -279,7 +279,52 @@ async fn config(State(st): State<Arc<AppState>>) -> Json<Value> {
             .map(|(name, paths)| json!({ "name": name, "paths": paths }))
             .collect()
     };
-    Json(json!({ "links": st.links, "duplicateNames": conflicts }))
+    let big_files = large_assets(&st.root, 5 * 1024 * 1024);
+    Json(json!({
+        "links": st.links,
+        "duplicateNames": conflicts,
+        "largeAssets": big_files,
+    }))
+}
+
+/// 找出 `assets/` 下超过阈值的文件（PRD 6.4：大文件进 Git 会持续撑大仓库）
+fn large_assets(root: &std::path::Path, threshold: u64) -> Vec<Value> {
+    let mut out = Vec::new();
+    let assets = root.join("assets");
+    if !assets.is_dir() {
+        return out;
+    }
+    let mut stack = vec![assets];
+    let mut visited = 0;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > 5000 {
+                return out;
+            }
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if meta.is_dir() {
+                stack.push(path);
+            } else if meta.len() > threshold {
+                let rel = path
+                    .strip_prefix(root)
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                out.push(json!({
+                    "path": rel,
+                    "sizeMb": (meta.len() as f64 / 1024.0 / 1024.0 * 10.0).round() / 10.0,
+                }));
+            }
+        }
+    }
+    out.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
+    out
 }
 async fn revision(State(st): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({ "revision": st.revision.load(std::sync::atomic::Ordering::SeqCst) }))

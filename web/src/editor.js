@@ -45,6 +45,7 @@ const theme = EditorView.theme({
 });
 
 const markHide = Decoration.mark({ class: 'cm-syntax-mark' });
+const tagMark = Decoration.mark({ class: 'cm-tag' });
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -365,6 +366,11 @@ function buildDecorations(view, assetFor, linksEnabled) {
               deco: Decoration.replace({ widget: new WikiLinkWidget(m[1].trim()) }),
             });
           }
+        }
+
+        for (const m of text.matchAll(/(^|[\s(（，。；：])#([\w\u3400-\u9fff/-]+)/g)) {
+          const startAt = line.from + m.index + m[1].length;
+          ranges.push({ from: startAt, to: startAt + 1 + m[2].length, deco: tagMark });
         }
 
         for (const m of text.matchAll(/(\*\*|__|\*|_|`+|~~|^#{1,6}\s)/g)) {

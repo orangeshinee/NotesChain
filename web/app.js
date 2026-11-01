@@ -10,6 +10,7 @@ const state = {
   links: false,
   todoLimit: 1000,
   duplicateNames: [],
+  largeAssets: [],
   leafEls: new Map(),
 };
 
@@ -1190,6 +1191,12 @@ async function boot() {
     if (cfg) {
       state.links = !!cfg.links;
       state.duplicateNames = cfg.duplicateNames || [];
+      state.largeAssets = cfg.largeAssets || [];
+      if (state.largeAssets.length) {
+        const names = state.largeAssets.map((f) => `${f.path} (${f.sizeMb}MB)`).join('、');
+        const note = el('div', 'notice', `assets/ 里有大文件，会让 Git 仓库持续变大：${names}`);
+        document.querySelector('.panels').prepend(note);
+      }
       if (state.duplicateNames.length) {
         const names = state.duplicateNames.map((d) => d.name).join('、');
         const note = el('div', 'notice', `raw/ 下有同名笔记，裸名暂不解析：${names}`);

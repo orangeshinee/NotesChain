@@ -327,6 +327,12 @@ pre.patch {
   background: var(--chip-bg);
   color: var(--chip-fg);
 }
+.cm-tag {
+  color: var(--chip-fg);
+  background: var(--chip-bg);
+  border-radius: 8px;
+  padding: 0 4px;
+}
 /* 编辑器内：待办复选框 / 图片预览 */
 .cm-todo-box {
   width: 14px;
