@@ -747,3 +747,26 @@ table.todos .done-at {
   white-space: nowrap;
 }
 .section-head .segmented { margin-left: auto; }
+
+/* 待办表列宽拖拽 */
+table.todos th { position: relative; user-select: none; }
+.col-resizer {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+}
+.col-resizer:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* 日程按天折叠 */
+.day-head .day-caret {
+  font-size: 10px;
+  color: var(--faint);
+  transition: transform .12s ease;
+  flex: none;
+}
+.day.collapsed .day-caret { transform: rotate(-90deg); }
+.day.collapsed .slots,
+.day.collapsed .unrec { display: none; }

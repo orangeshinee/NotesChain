@@ -327,11 +327,16 @@ function buildSchedule(data) {
   for (const day of days) {
     const box = el('div', day.today ? 'day today' : 'day');
     const dh = el('div', 'day-head');
+    dh.style.cursor = 'pointer';
+    dh.title = '点击折叠/展开当天日程';
+    dh.addEventListener('click', () => box.classList.toggle('collapsed'));
     if (day.today) dh.append(el('span', 'pill', '今天'));
     dh.append(el('span', 'date', `${day.date.slice(5).replace('-', '/')} ${day.weekday}`));
     if (day.items.length) dh.append(el('span', 'muted', `${day.items.length} 项`));
     box.append(dh);
 
+    const caret = el('span', 'day-caret', '▾');
+    dh.append(caret);
     if (day.items.length) {
       const list = el('ul', 'slots');
       for (const item of day.items) {
@@ -398,11 +403,63 @@ function buildTodoSection(todos, onShowAll) {
   return section;
 }
 
+function loadColWidths() {
+  try {
+    const raw = localStorage.getItem('nc.todoCols');
+    const saved = raw ? JSON.parse(raw) : null;
+    return Array.isArray(saved) && saved.length === 4 ? saved : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function makeColResizer(index, colEls) {
+  const handle = el('div', 'col-resizer');
+  handle.title = '拖动调整列宽';
+  handle.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = colEls[index].getBoundingClientRect().width;
+    const onMove = (ev) => {
+      const width = Math.max(60, Math.round(startWidth + (ev.clientX - startX)));
+      colEls[index].style.width = width + 'px';
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      try {
+        localStorage.setItem('nc.todoCols', JSON.stringify(colEls.map((c) => c.style.width)));
+      } catch (err) {
+        /* 隐私模式下 localStorage 可能不可用 */
+      }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+  return handle;
+}
 function buildTodoTable(items) {
   const table = el('table', 'todos');
+  const saved = loadColWidths();
+  const defaults = ['38px', '34%', '22%', 'auto'];
+  const colEls = defaults.map((width, index) => {
+    const col = document.createElement('col');
+    col.style.width = (saved && saved[index]) || width;
+    return col;
+  });
+  const colgroup = document.createElement('colgroup');
+  colEls.forEach((col) => colgroup.append(col));
+  table.append(colgroup);
+
   const head = el('thead');
   const hr = el('tr');
-  ['', '事项', '文件', '标签'].forEach((h) => hr.append(el('th', '', h)));
+  ['', '事项', '文件', '标签'].forEach((label, index) => {
+    const th = el('th');
+    th.append(el('span', '', label));
+    if (index > 0 && index < 3) th.append(makeColResizer(index, colEls));
+    hr.append(th);
+  });
   head.append(hr);
   const body = el('tbody');
 
