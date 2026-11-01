@@ -28,7 +28,7 @@ pwsh -File tools\verify-real-dir.ps1 -Path "D:\原笔记目录" -Out .\体检报
 ## 第 1 步：启动并看识别结果
 
 ```powershell
-.\noteschain.exe --dir D:\notes-trial --port 8080
+.\noteschain.exe --dir D:\notes-trial --port 8090
 ```
 
 终端会打印带 token 的地址。**记录**：文件数、未完成待办数。
@@ -80,7 +80,7 @@ git status --porcelain
 ## 第 6 步：无 git / 关闭 git 的降级（PRD 6.2、6.4）
 
 ```powershell
-.\noteschain.exe --dir D:\notes-trial --port 8080 --no-git
+.\noteschain.exe --dir D:\notes-trial --port 8090 --no-git
 ```
 
 - [ ] 顶部显示「版本历史已关闭」
@@ -110,7 +110,7 @@ node tools\gen-corpus.js D:\perf-notes
 
 ## 第 8 步：安全抽检（PRD 9）
 
-- [ ] 新开无痕窗口访问 `http://127.0.0.1:8080/`（不带 token）→ 401
+- [ ] 新开无痕窗口访问 `http://127.0.0.1:8090/`（不带 token）→ 401
 - [ ] 访问 `/api/files/..%2f..%2fCargo.toml` → 400
 - [ ] 不带 Cookie 直接请求 `/api/asset?path=assets/a.png` → 401
 

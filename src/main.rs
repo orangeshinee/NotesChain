@@ -24,7 +24,7 @@ struct Args {
     dir: PathBuf,
 
     /// 监听端口（只绑 127.0.0.1）
-    #[arg(long, default_value_t = 8080)]
+    #[arg(long, default_value_t = 8090)]
     port: u16,
 
     /// 启用双链 [[目标]]（实验性，PRD 3.5 默认关闭）

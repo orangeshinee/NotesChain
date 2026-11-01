@@ -22,20 +22,20 @@ cargo build --release
 ## 二、启动与访问
 
 ```powershell
-noteschain.exe --dir D:\notes --port 8080
+noteschain.exe --dir D:\notes --port 8090
 ```
 
 | 参数 | 说明 |
 | --- | --- |
 | `--dir` | 笔记根目录（必填，不存在会报错退出） |
-| `--port` | 端口，默认 8080，只绑 `127.0.0.1` |
+| `--port` | 端口，默认 8090，只绑 `127.0.0.1` |
 | `--links` | 开启双链 [[目标]]（实验性，默认关闭） |
 | `--no-git` | 关闭 Git 自动提交（同步盘等场景），其余功能保留 |
 
 启动后终端打印一次带 token 的地址：
 
 ```
-http://127.0.0.1:8080/?token=<64位随机串>
+http://127.0.0.1:8090/?token=<64位随机串>
 ```
 
 - 首次访问会用 token 换一个 HttpOnly + SameSite=Strict 的 Cookie，然后跳到干净地址
@@ -95,7 +95,7 @@ pwsh -File tools\edge-check.ps1
 pwsh -File tools\verify-real-dir.ps1 -Path "D:\notes" -Out .\体检报告.md
 
 # 3.5) 真实浏览器交互（悬停预览、点击待办）——需要先起服务并把带 token 的地址传进去
-# pwsh -File tools\browser-probe.ps1 -Url "http://127.0.0.1:8080/?token=..." -Hash "#/file/2026/11/2026-11-01.md"
+# pwsh -File tools\browser-probe.ps1 -Url "http://127.0.0.1:8090/?token=..." -Hash "#/file/2026/11/2026-11-01.md"
 
 # 4) 性能（可选，1000 文件语料）
 node tools\gen-corpus.js .demo\perf-notes

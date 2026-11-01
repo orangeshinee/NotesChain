@@ -50,13 +50,13 @@ npm run build      # 输出 web/dist/editor.js，编译期内嵌进二进制
 > 需要在自己机器上做一次完整验收，照着 [docs/verify.md](docs/verify.md) 走即可。
 
 ```powershell
-cargo run -- --dir D:\notes --port 8080
+cargo run -- --dir D:\notes --port 8090
 ```
 
 启动后终端会打印带 token 的地址，形如：
 
 ```
-http://127.0.0.1:8080/?token=<64位随机串>
+http://127.0.0.1:8090/?token=<64位随机串>
 ```
 
 首次访问会在浏览器种下 HttpOnly Cookie 并跳转到干净地址；token 只存在于本次进程，重启后需要用新地址重新打开。
@@ -66,12 +66,12 @@ http://127.0.0.1:8080/?token=<64位随机串>
 | 参数 | 说明 |
 | --- | --- |
 | `--dir` | 笔记根目录（必填） |
-| `--port` | 监听端口，默认 8080；只绑 `127.0.0.1` |
+| `--port` | 监听端口，默认 8090；只绑 `127.0.0.1` |
 
 ## 开发
 
 ```powershell
-cargo test      # 17 个单元测试：解析、定位、路径防护
+cargo test      # 单元测试（解析、定位、路径防护）
 cargo build --release
 ```
 
