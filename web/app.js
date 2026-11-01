@@ -670,13 +670,12 @@ function buildTodoSection(todos, onShowAll) {
 
 function loadColWidths() {
   try {
-    const raw = localStorage.getItem('nc.todoCols');
+    // v2：删掉「标签」列后是 4 列（序号 / 勾选 / 事项 / 文件）。
+    // 旧键 nc.todoCols 里的宽度是按 5 列存的，混用会让列宽错位，所以换键不迁移。
+    const raw = localStorage.getItem('nc.todoCols.v2');
     const saved = raw ? JSON.parse(raw) : null;
-    if (!Array.isArray(saved)) return null;
-    if (saved.length === 5) return saved;
-    // 旧版 4 列（勾选/事项/文件/标签）→ 新 5 列（序号 + 原 4 列）
-    if (saved.length === 4) return ['46px', ...saved];
-    return null;
+    if (!Array.isArray(saved) || saved.length !== 4) return null;
+    return saved;
   } catch (err) {
     return null;
   }
@@ -698,7 +697,7 @@ function makeColResizer(index, colEls) {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       try {
-        localStorage.setItem('nc.todoCols', JSON.stringify(colEls.map((c) => c.style.width)));
+        localStorage.setItem('nc.todoCols.v2', JSON.stringify(colEls.map((c) => c.style.width)));
       } catch (err) {
         /* 隐私模式下 localStorage 可能不可用 */
       }
@@ -731,10 +730,29 @@ function resolveLinkPath(target) {
     ? (/\.md$/.test(clean) ? clean : clean + '.md')
     : 'raw/' + clean + '.md';
 }
+/* 待办正文里的 #标签 单独成段：避免「#工作/供应」被折成两行，同时保留点击筛选 */
+function appendTodoText(container, raw) {
+  const re = /#[\w\u3400-\u9fff/-]+/g;
+  let last = 0;
+  let match;
+  while ((match = re.exec(raw)) !== null) {
+    if (match.index > last) container.append(document.createTextNode(raw.slice(last, match.index)));
+    const name = match[0].slice(1);
+    const chip = el('span', 'tag', match[0]);
+    chip.addEventListener('click', (event) => {
+      event.stopPropagation();
+      go('/tag/' + encodeURIComponent(name));
+    });
+    container.append(chip);
+    last = match.index + match[0].length;
+  }
+  if (last < raw.length) container.append(document.createTextNode(raw.slice(last)));
+}
+
 function buildTodoTable(items) {
   const table = el('table', 'todos');
   const saved = loadColWidths();
-  const defaults = ['46px', '38px', '34%', '22%', 'auto'];
+  const defaults = ['46px', '38px', 'auto', '176px'];
   const colEls = defaults.map((width, index) => {
     const col = document.createElement('col');
     col.style.width = (saved && saved[index]) || width;
@@ -746,10 +764,10 @@ function buildTodoTable(items) {
 
   const head = el('thead');
   const hr = el('tr');
-  ['#', '', '事项', '文件', '标签'].forEach((label, index) => {
+  ['#', '', '事项', '文件'].forEach((label, index) => {
     const th = el('th');
     th.append(el('span', '', label));
-    if (index > 1 && index < 4) th.append(makeColResizer(index, colEls));
+    if (index > 1) th.append(makeColResizer(index, colEls));
     hr.append(th);
   });
   head.append(hr);
@@ -758,7 +776,7 @@ function buildTodoTable(items) {
   if (!items.length) {
     const tr = el('tr');
     const td = el('td', '', '没有未完成的待办，清静。');
-    td.colSpan = 5;
+    td.colSpan = 4;
     tr.append(td);
     body.append(tr);
   }
@@ -785,7 +803,9 @@ function buildTodoTable(items) {
     if (typeof todo.priority === 'number') {
       tdText.append(el('span', 'prio p' + todo.priority, 'P' + todo.priority));
     }
-    const text = el('span', 'text', (todo.indent ? '· ' : '') + todo.text);
+    const text = el('span', 'text');
+    if (todo.indent) text.append(document.createTextNode('· '));
+    appendTodoText(text, todo.text);
     tdText.append(text);
     if (todo.done_at) tdText.append(el('span', 'done-at', '✅ ' + todo.done_at));
 
@@ -795,18 +815,7 @@ function buildTodoTable(items) {
     file.addEventListener('click', () => go('/file/' + encodeURIComponent(todo.path)));
     tdFile.append(file);
 
-    const tdTags = el('td');
-    if (todo.tags.length) {
-      for (const tag of todo.tags) {
-        const chip = el('span', 'tag', '#' + tag);
-        chip.addEventListener('click', () => go('/tag/' + encodeURIComponent(tag)));
-        tdTags.append(chip);
-      }
-    } else {
-      tdTags.append(el('span', 'no-tag', '—'));
-    }
-
-    tr.append(tdIdx, tdCheck, tdText, tdFile, tdTags);
+    tr.append(tdIdx, tdCheck, tdText, tdFile);
     return tr;
   };
 
@@ -815,7 +824,7 @@ function buildTodoTable(items) {
   let rendered = 0;
   const sentinel = el('tr', 'sentinel');
   const sentinelCell = el('td');
-  sentinelCell.colSpan = 5;
+  sentinelCell.colSpan = 4;
   sentinel.append(sentinelCell);
 
   const appendChunk = () => {
@@ -1349,6 +1358,7 @@ async function showSearch(q) {
       const li = el('li');
       const meta = el('div', 'meta', `${item.path}:${item.line}`);
       meta.append(el('span', 'kind', kindLabel(item.kind)));
+      li.append(meta);
       const isCode = item.kind === 'code';
       if (item.before) li.append(el('div', 'ctx', item.before));
       const snippet = el('div', isCode ? 'snippet clamped' : 'snippet');
@@ -1513,7 +1523,11 @@ function renderFileTree(data) {
 }
 
 function fileLeaf(path, label, todos) {
-  const leaf = el('a', 'leaf', label);
+  const leaf = el('a', 'leaf');
+  leaf.append(el('span', '', label));
+  // 同名笔记（raw/ 与子目录）只显示 basename 会分不清，补上所在目录
+  const dup = (state.duplicateNames || []).some((d) => d.name === label);
+  if (dup) leaf.append(el('span', 'leaf-hint', path.split('/').slice(0, -1).join('/') + '/'));
   leaf.title = path;
   if (todos) leaf.append(el('span', 'n', String(todos)));
   leaf.addEventListener('click', () => go('/file/' + encodeURIComponent(path)));
@@ -1962,6 +1976,30 @@ if (wideBtn) {
       /* ignore */
     }
   });
+}
+
+/* 侧边栏「⋯」菜单：历史 / 宽屏 / 刷新 / 重建索引 */
+const moreToggle = document.getElementById('more-toggle');
+const moreMenu = document.getElementById('more-menu');
+if (moreToggle && moreMenu) {
+  const setMoreOpen = (open) => {
+    moreMenu.hidden = !open;
+    moreToggle.setAttribute('aria-expanded', String(open));
+  };
+  moreToggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setMoreOpen(moreMenu.hidden);
+  });
+  moreMenu.addEventListener('click', (event) => {
+    if (event.target.closest('.quick')) setMoreOpen(false);
+  });
+  document.addEventListener('click', (event) => {
+    if (!moreMenu.hidden && !event.target.closest('.quicknav')) setMoreOpen(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !moreMenu.hidden) setMoreOpen(false);
+  });
+  window.addEventListener('hashchange', () => setMoreOpen(false));
 }
 
 async function openNewNoteDialog() {

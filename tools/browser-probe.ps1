@@ -418,7 +418,7 @@ try {
   document.dispatchEvent(new MouseEvent('mousemove', at(r.left + 82)));
   document.dispatchEvent(new MouseEvent('mouseup', at(r.left + 82)));
   const after = Math.round(col.getBoundingClientRect().width);
-  return JSON.stringify({ before, after, saved: localStorage.getItem('nc.todoCols') });
+  return JSON.stringify({ before, after, saved: localStorage.getItem('nc.todoCols.v2') });
 })()
 '@
     $results += "resize => " + (Eval-Js $ws $js )

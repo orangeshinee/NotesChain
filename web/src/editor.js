@@ -17,11 +17,15 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 
+const READ_FONT = 'var(--font-read, "Songti SC", "SimSun", serif)';
+
 const highlight = HighlightStyle.define([
-  { tag: tags.heading1, fontSize: '1.5em', fontWeight: '700' },
-  { tag: tags.heading2, fontSize: '1.24em', fontWeight: '700' },
-  { tag: tags.heading3, fontSize: '1.08em', fontWeight: '600' },
+  { tag: tags.heading1, fontSize: '1.8em', fontWeight: '600', fontFamily: READ_FONT },
+  { tag: tags.heading2, fontSize: '1.27em', fontWeight: '600', fontFamily: READ_FONT },
+  { tag: tags.heading3, fontSize: '1.07em', fontWeight: '600', fontFamily: READ_FONT },
   { tag: tags.heading4, fontWeight: '600' },
+  { tag: tags.heading5, fontWeight: '600' },
+  { tag: tags.heading6, fontWeight: '600' },
   { tag: tags.strong, fontWeight: '700' },
   { tag: tags.emphasis, fontStyle: 'italic' },
   { tag: tags.strikethrough, textDecoration: 'line-through' },
@@ -35,12 +39,13 @@ const highlight = HighlightStyle.define([
 ]);
 
 const theme = EditorView.theme({
-  '&': { color: 'var(--fg)', backgroundColor: 'transparent', fontSize: '14.5px' },
-  '.cm-content': { fontFamily: 'inherit', padding: '4px 0', lineHeight: '1.78', caretColor: 'var(--accent)' },
+  '&': { color: 'var(--fg)', backgroundColor: 'transparent', fontSize: '15px' },
+  '.cm-content': { fontFamily: 'inherit', padding: '4px 0', lineHeight: '1.85', caretColor: 'var(--accent)' },
   '.cm-scroller': { fontFamily: 'inherit', overflow: 'auto' },
   '.cm-line': { padding: '0 2px' },
   '&.cm-focused': { outline: 'none' },
-  '.cm-activeLine': { backgroundColor: 'rgba(127,127,127,.07)' },
+  // 整行灰底会让标题看起来像被选中的表格行；改成左侧一条细标记
+  '.cm-activeLine': { backgroundColor: 'transparent', boxShadow: 'inset 2px 0 0 color-mix(in srgb, var(--accent) 45%, transparent)' },
   '.cm-selectionBackground, ::selection': { backgroundColor: 'var(--accent-soft)' },
   '.cm-cursor': { borderLeftColor: 'var(--accent)' },
 });
