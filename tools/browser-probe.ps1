@@ -6,7 +6,6 @@ param(
   [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
-  [string]$Screenshot = "",
   [int]$DebugPort = 9333
 )
 
@@ -124,21 +123,6 @@ try {
 })()
 '@
     $results += "hover => " + (Eval-Js $ws $js ([ref]$id))
-    if ($Screenshot) {
-      $id++
-      Send-Cdp $ws $id.Value "Page.captureScreenshot" @{ format = "png" }
-      $deadline2 = (Get-Date).AddSeconds(8)
-      while ((Get-Date) -lt $deadline2) {
-        $msg = Receive-Cdp $ws 1500
-        if (-not $msg) { continue }
-        $obj = $msg | ConvertFrom-Json
-        if ($obj.id -eq $id.Value -and $obj.result -and $obj.result.data) {
-          [IO.File]::WriteAllBytes($Screenshot, [Convert]::FromBase64String($obj.result.data))
-          $results += "screenshot => $Screenshot"
-          break
-        }
-      }
-    }
   }
 
   if (& $want "todo") {
