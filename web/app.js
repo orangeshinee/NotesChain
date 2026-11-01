@@ -478,7 +478,35 @@ function buildTodoSection(todos, onShowAll) {
     toggle.append(btn);
   }
   head.append(toggle);
-  section.append(head, buildTodoTable(todos.items));
+
+  const addInput = el('input', 'quick-add');
+  addInput.placeholder = state.todoStatus === 'done'
+    ? '在「未完成」视图下才能添加'
+    : '加一条待办，回车保存（#标签 会自动识别）';
+  addInput.disabled = state.todoStatus === 'done';
+  addInput.addEventListener('keydown', async (event) => {
+    if (event.key !== 'Enter') return;
+    const text = addInput.value.trim();
+    if (!text) return;
+    addInput.disabled = true;
+    try {
+      await api('/api/todos/append', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      addInput.value = '';
+      await showHome();
+      const next = document.querySelector('.quick-add');
+      if (next) next.focus();
+    } catch (err) {
+      addInput.disabled = false;
+      window.alert('添加失败：' + (err.message || err));
+    }
+  });
+  const addRow = el('div', 'quick-add-row');
+  addRow.append(addInput);
+  section.append(head, addRow, buildTodoTable(todos.items));
 
   if (todos.total > todos.items.length) {
     const bar = el('div', 'more-bar');

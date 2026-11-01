@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [int]$DebugPort = 9333
@@ -255,6 +255,16 @@ try {
 })()
 '@
     $results += "virtual => " + (Eval-Js $ws $js ([ref]$id))
+  }
+
+  if (& $want "quickadd") {
+    Reload-Page $ws ($Url + "#/") ([ref]$id)
+    $id++
+    $filled = Eval-Js $ws "(() => { const i = document.querySelector('.quick-add'); if (!i) return 'no-input'; i.scrollIntoView({ block: 'center' }); i.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(i, '探针加的待办 #探针'); i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return 'dispatched'; })()" ([ref]$id)
+    Start-Sleep -Milliseconds 2000
+    $id++
+    $check = Eval-Js $ws "JSON.stringify({ filled: '$filled', added: !!Array.from(document.querySelectorAll('table.todos .text')).find((e) => e.textContent.includes('探针加的待办')), total: document.querySelector('.doc-head .right')?.textContent || '' })" ([ref]$id)
+    $results += "quickadd => " + $check
   }
 
   if (& $want "resize") {

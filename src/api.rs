@@ -28,6 +28,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/files", get(list_files))
         .route("/api/files/*path", get(read_file).put(save_file))
         .route("/api/todos", get(list_todos).patch(patch_todo))
+        .route("/api/todos/append", post(append_todo))
         .route("/api/tags", get(list_tags))
         .route("/api/search", get(search))
         .route("/api/schedule", get(schedule_view))
@@ -481,6 +482,120 @@ async fn patch_todo(
     })))
 }
 
+// ---------------------------------------------------------------- 快速添加待办
+
+#[derive(Deserialize)]
+struct AppendTodoRequest {
+    text: String,
+    /// 不传则写进今天的日记
+    #[serde(default)]
+    path: Option<String>,
+}
+
+fn insert_todo_line(content: &str, line: &str) -> (String, usize) {
+    let lines: Vec<&str> = content.lines().collect();
+    // 找 `## 待办` 段
+    let mut heading: Option<usize> = None;
+    for (idx, text) in lines.iter().enumerate() {
+        if text.trim() == "## 待办" {
+            heading = Some(idx);
+            break;
+        }
+    }
+
+    match heading {
+        Some(h) => {
+            // 段尾：下一个一级/二级标题之前
+            let mut end = lines.len();
+            for (idx, text) in lines.iter().enumerate().skip(h + 1) {
+                let trimmed = text.trim_start();
+                if trimmed.starts_with('#') {
+                    let level = trimmed.chars().take_while(|c| *c == '#').count();
+                    if level <= 2 {
+                        end = idx;
+                        break;
+                    }
+                }
+            }
+            // 去掉段尾空行
+            let mut insert_at = end;
+            while insert_at > h + 1 && lines[insert_at - 1].trim().is_empty() {
+                insert_at -= 1;
+            }
+            let mut out: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+            out.insert(insert_at, line.to_string());
+            let mut text = out.join("\n");
+            if content.ends_with('\n') || !content.is_empty() {
+                text.push('\n');
+            }
+            (text, insert_at + 1)
+        }
+        None => {
+            let mut text = content.trim_end().to_string();
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str("## 待办\n\n");
+            text.push_str(line);
+            text.push('\n');
+            let count = text.lines().count();
+            (text, count)
+        }
+    }
+}
+
+async fn append_todo(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<AppendTodoRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let text = body.text.trim();
+    if text.is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "内容为空"));
+    }
+    if text.contains('\n') {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "一次只能添加一条"));
+    }
+    let text = text.trim_start_matches("- [ ]").trim_start_matches("- [x]").trim();
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let rel = body
+        .path
+        .clone()
+        .unwrap_or_else(|| format!("{}/{}/{}.md", &today[..4], &today[5..7], today));
+
+    let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
+    let lock = st.lock_for(&rel).await;
+    let _guard = lock.lock().await;
+
+    let exists = abs.is_file();
+    let content = if exists {
+        std::fs::read_to_string(&abs).map_err(ApiError::internal)?
+    } else {
+        DAILY_TEMPLATE.replace("YYYY-MM-DD", &today)
+    };
+
+    let (updated, line_no) = insert_todo_line(&content, &format!("- [ ] {text}"));
+    if !exists {
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
+        }
+    }
+    todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
+    st.index
+        .write()
+        .await
+        .upsert(&st.root, &rel)
+        .map_err(ApiError::internal)?;
+    st.git.notify();
+    st.revision
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    Ok(Json(json!({
+        "path": rel,
+        "line": line_no,
+        "version": crate::index::version_of(mtime_ms(&abs), &updated),
+    })))
+}
 // ---------------------------------------------------------------- 每日文件 / 索引 / git
 
 async fn ensure_daily(State(st): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {

@@ -973,3 +973,20 @@ table.todos tbody tr[data-path] {
   contain-intrinsic-size: 0 40px;
 }
 table.todos tr.sentinel td { height: 1px; padding: 0; border: none; }
+
+/* 快速添加待办 */
+.quick-add-row { padding: 0 0 10px; }
+.quick-add {
+  width: 100%;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  outline: none;
+}
+.quick-add::placeholder { color: var(--faint); }
+.quick-add:focus { border-style: solid; border-color: var(--accent); }
+.quick-add:disabled { opacity: .5; cursor: not-allowed; }
