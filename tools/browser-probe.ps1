@@ -1,8 +1,11 @@
-# 用 Chrome DevTools Protocol 在真实浏览器里做交互验证（悬停、点击）
-# 用法：pwsh -File tools/browser-probe.ps1 -Url "http://127.0.0.1:18086/?token=..." -Hash "#/file/raw/xxx.md"
+# 用 Chrome DevTools Protocol 在真实浏览器里做交互验证
+# 用法：pwsh -File tools/browser-probe.ps1 -Url "http://127.0.0.1:18086/?token=..." -Hash "#/file/raw/x.md" -Scenario hover|todo|autosave|conflict|resize|all
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "all")]
+  [string]$Scenario = "all",
+  [string]$NotesDir = "",
   [int]$DebugPort = 9333
 )
 
@@ -22,20 +25,16 @@ $proc = Start-Process -FilePath $edge -ArgumentList @(
 function Send-Cdp($ws, $id, $method, $params) {
   $payload = @{ id = $id; method = $method; params = $params } | ConvertTo-Json -Compress -Depth 8
   $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
-  $segment = [ArraySegment[byte]]::new($bytes)
-  $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [Threading.CancellationToken]::None).Wait()
+  $ws.SendAsync([ArraySegment[byte]]::new($bytes), [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [Threading.CancellationToken]::None).Wait()
 }
 
 function Receive-Cdp($ws, $timeoutMs = 5000) {
   $buffer = New-Object byte[] 262144
-  $segment = [ArraySegment[byte]]::new($buffer)
   $cts = New-Object Threading.CancellationTokenSource
   $cts.CancelAfter($timeoutMs)
   try {
-    $result = $ws.ReceiveAsync($segment, $cts.Token).Result
-    if ($result.Count -gt 0) {
-      return [Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count)
-    }
+    $result = $ws.ReceiveAsync([ArraySegment[byte]]::new($buffer), $cts.Token).Result
+    if ($result.Count -gt 0) { return [Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count) }
   } catch { }
   return $null
 }
@@ -43,7 +42,7 @@ function Receive-Cdp($ws, $timeoutMs = 5000) {
 function Eval-Js($ws, $expression, [ref]$id) {
   $id.Value++
   Send-Cdp $ws $id.Value "Runtime.evaluate" @{ expression = $expression; returnByValue = $true; awaitPromise = $true }
-  $deadline = (Get-Date).AddSeconds(6)
+  $deadline = (Get-Date).AddSeconds(8)
   while ((Get-Date) -lt $deadline) {
     $msg = Receive-Cdp $ws 1500
     if (-not $msg) { continue }
@@ -56,8 +55,25 @@ function Eval-Js($ws, $expression, [ref]$id) {
   return $null
 }
 
+# 真·键盘输入：先用鼠标点进编辑器，再用 CDP Input.insertText
+function Focus-And-Type($ws, $text, [ref]$id) {
+  $id.Value++
+  $rect = Eval-Js $ws "(() => { const c = document.querySelector('.cm-content'); if (!c) return null; c.focus(); const r = c.getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + 120), y: Math.round(r.top + 40) }); })()" $id
+  if (-not $rect) { return "no-editor" }
+  $p = $rect | ConvertFrom-Json
+  $id.Value++
+  Send-Cdp $ws $id.Value "Input.dispatchMouseEvent" @{ type = "mousePressed"; x = $p.x; y = $p.y; button = "left"; clickCount = 1 }
+  $id.Value++
+  Send-Cdp $ws $id.Value "Input.dispatchMouseEvent" @{ type = "mouseReleased"; x = $p.x; y = $p.y; button = "left"; clickCount = 1 }
+  Start-Sleep -Milliseconds 200
+  $id.Value++
+  Send-Cdp $ws $id.Value "Input.insertText" @{ text = $text }
+  Start-Sleep -Milliseconds 1600
+  $id.Value++
+  return Eval-Js $ws "document.querySelector('.status')?.textContent || ''" $id
+}
+
 try {
-  # 等 DevTools 端口就绪
   $targets = $null
   $deadline = (Get-Date).AddSeconds(15)
   while ((Get-Date) -lt $deadline) {
@@ -77,50 +93,103 @@ try {
   Send-Cdp $ws 0 "Page.enable" @{}
   Send-Cdp $ws 0 "Runtime.enable" @{}
   $id = 10
-  $target = $Url + $Hash
-  Send-Cdp $ws $id "Page.navigate" @{ url = $target }
+  Send-Cdp $ws $id "Page.navigate" @{ url = ($Url + $Hash) }
   Start-Sleep -Seconds 3
 
-  $id++
-  $title = Eval-Js $ws "document.querySelector('.doc-head .title')?.textContent || ''" ([ref]$id)
-  "页面标题: $title"
+  $results = @()
+  $want = { param($name) $Scenario -eq "all" -or $Scenario -eq $name }
 
-  # 1) 悬停到第一个双链上，看是否出现悬浮卡片
-  $id++
-  $hoverScript = @'
+  if (& $want "hover") {
+    $id++
+    $js = @'
 (async () => {
   const span = document.querySelector('.cm-wikilink');
   if (!span) return 'no-wikilink';
   const r = span.getBoundingClientRect();
-  const x = r.left + Math.min(20, r.width / 2);
-  const y = r.top + r.height / 2;
+  const x = r.left + Math.min(20, r.width / 2), y = r.top + r.height / 2;
   for (const type of ['pointerover', 'mouseover', 'pointermove', 'mousemove']) {
     span.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y }));
   }
-  await new Promise((r2) => setTimeout(r2, 700));
+  await new Promise((r2) => setTimeout(r2, 800));
   const tip = document.querySelector('.cm-tooltip');
-  if (!tip) return 'no-tooltip';
-  return (tip.innerText || tip.textContent || '').slice(0, 200);
+  return tip ? (tip.innerText || '').slice(0, 120) : 'no-tooltip';
 })()
 '@
-  $hover = Eval-Js $ws $hoverScript ([ref]$id)
-  "悬浮预览: $hover"
+    $results += "hover => " + (Eval-Js $ws $js ([ref]$id))
+  }
 
-  # 2) 点击第一个待办复选框，看是否发请求成功（返回行号变化）
-  $id++
-  $clickScript = @'
+  if (& $want "todo") {
+    $id++
+    $js = @'
 (async () => {
   const box = document.querySelector('.cm-todo-box');
   if (!box) return 'no-checkbox';
   const before = box.checked;
   box.click();
   await new Promise((r) => setTimeout(r, 900));
-  return JSON.stringify({ before, after: document.querySelector('.status')?.textContent || '' });
+  return JSON.stringify({ before, status: document.querySelector('.status')?.textContent || '' });
 })()
 '@
-  $click = Eval-Js $ws $clickScript ([ref]$id)
-  "点击待办: $click"
+    $results += "todo => " + (Eval-Js $ws $js ([ref]$id))
+  }
 
+  if (& $want "autosave") {
+    $typed = Focus-And-Type $ws "`n<!-- autosave-marker -->`n" ([ref]$id)
+    Start-Sleep -Milliseconds 500
+    $id++
+    $verify = Eval-Js $ws @'
+(async () => {
+  const path = decodeURIComponent(location.hash.replace('#/file/', ''));
+  const resp = await fetch('/api/files/' + encodeURIComponent(path));
+  const data = await resp.json();
+  return JSON.stringify({ status: document.querySelector('.status')?.textContent || '', marker: (data.content || '').includes('autosave-marker') });
+})()
+'@ ([ref]$id)
+    $results += "autosave => status=$typed, verify=$verify"
+  }
+
+  if (& $want "conflict" -and $NotesDir) {
+    # 页面已加载后，外部改文件使版本号失效
+    $rel = [uri]::UnescapeDataString(($Hash -replace '^#/file/', ''))
+    $disk = Join-Path $NotesDir $rel.Replace('/', '\')
+    if (Test-Path $disk) {
+      Add-Content -Path $disk -Value "`n外部改了一行`n" -Encoding utf8
+      Start-Sleep -Milliseconds 300
+      $typed = Focus-And-Type $ws "`n冲突测试`n" ([ref]$id)
+      $id++
+      $banner = Eval-Js $ws "document.querySelector('.conflict-bar') ? document.querySelector('.conflict-bar').innerText.slice(0,80) : 'no-banner'" ([ref]$id)
+      $results += "conflict => status=$typed, banner=$banner"
+    } else {
+      $results += "conflict => 跳过（找不到文件 $disk）"
+    }
+  }
+
+  if (& $want "resize") {
+    # 回首页测列宽拖拽
+    $id++
+    Send-Cdp $ws $id "Page.navigate" @{ url = ($Url + "#/") }
+    Start-Sleep -Seconds 2
+    $id++
+    $js = @'
+(() => {
+  const handle = document.querySelector('.col-resizer');
+  const col = document.querySelector('table.todos col:nth-child(2)');
+  if (!handle || !col) return 'no-handle';
+  const before = Math.round(col.getBoundingClientRect().width);
+  const r = handle.getBoundingClientRect();
+  const at = (x) => ({ bubbles: true, clientX: x, clientY: r.top + 5 });
+  handle.dispatchEvent(new MouseEvent('mousedown', at(r.left + 2)));
+  document.dispatchEvent(new MouseEvent('mousemove', at(r.left + 82)));
+  document.dispatchEvent(new MouseEvent('mouseup', at(r.left + 82)));
+  const after = Math.round(col.getBoundingClientRect().width);
+  return JSON.stringify({ before, after, saved: localStorage.getItem('nc.todoCols') });
+})()
+'@
+    $results += "resize => " + (Eval-Js $ws $js ([ref]$id))
+  }
+
+  "---- 结果 ----"
+  $results | ForEach-Object { $_ }
   $ws.Dispose()
 }
 finally {
