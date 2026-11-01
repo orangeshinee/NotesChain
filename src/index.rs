@@ -108,12 +108,12 @@ impl Index {
         Ok(())
     }
 
-    /// 全部未完成待办，按 PRD 4.1 的排序规则：
+    /// 全部待办（含已完成），按 PRD 4.1 的排序规则：
     /// 日记按日期倒序在前，其余按路径字典序、行号升序在后。
-    pub fn open_todos(&self) -> Vec<TodoRow> {
+    pub fn all_todos(&self) -> Vec<TodoRow> {
         let mut rows: Vec<TodoRow> = Vec::new();
         for file in &self.files {
-            for todo in file.todos.iter().filter(|t| !t.done) {
+            for todo in &file.todos {
                 rows.push(TodoRow {
                     path: file.path.clone(),
                     date: file.diary_date.clone(),
@@ -123,6 +123,8 @@ impl Index {
                     raw_line: todo.raw_line.clone(),
                     tags: todo.tags.clone(),
                     version: file.version.clone(),
+                    done: todo.done,
+                    done_at: todo.done_at.clone(),
                 });
             }
         }
@@ -134,8 +136,12 @@ impl Index {
         });
         rows
     }
-}
 
+    /// 未完成待办
+    pub fn open_todos(&self) -> Vec<TodoRow> {
+        self.all_todos().into_iter().filter(|row| !row.done).collect()
+    }
+}
 /// 首页待办行（序列化给前端）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TodoRow {
@@ -147,6 +153,8 @@ pub struct TodoRow {
     pub raw_line: String,
     pub tags: Vec<String>,
     pub version: String,
+    pub done: bool,
+    pub done_at: Option<String>,
 }
 
 fn load_file(abs: &Path, rel: &str) -> anyhow::Result<FileEntry> {
@@ -160,6 +168,8 @@ fn load_file(abs: &Path, rel: &str) -> anyhow::Result<FileEntry> {
     let bytes = fs::read(abs).with_context(|| "读取文件失败")?;
     let content = String::from_utf8(bytes)
         .map_err(|_| anyhow::anyhow!("不是合法的 UTF-8（疑似 GBK 老文件），已跳过，未做任何写入"))?;
+    // Windows 编辑器常带 UTF-8 BOM；不去掉会让首个标题行与行首待办判定全部失配
+    let content = content.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(content);
 
     let diary_date = detect_diary(rel, &content);
     let todos = markdown::parse_todos(&content);
@@ -344,6 +354,13 @@ mod tests {
         assert_eq!(detect_diary("notes/whatever.md", plain), None);
     }
 
+    #[test]
+    fn handles_utf8_bom() {
+        let content = "\u{feff}# 2026-10-01\n\n## 待办\n\n- [ ] 带 BOM 的待办\n";
+        let stripped = content.strip_prefix('\u{feff}').unwrap_or(content);
+        assert!(detect_diary("whatever.md", stripped).is_some());
+        assert_eq!(markdown::parse_todos(stripped).len(), 1);
+    }
     #[test]
     fn version_is_stable_and_content_sensitive() {
         let a = version_of(1000, "hello");

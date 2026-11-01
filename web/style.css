@@ -711,3 +711,39 @@ pre.patch { font-size: 12.5px; line-height: 1.62; }
   table.todos th:nth-child(3), table.todos td:nth-child(3) { width: 40%; }
   table.todos th:nth-child(4), table.todos td:nth-child(4) { display: none; }
 }
+
+/* 标签树折叠 */
+.tag-node { cursor: pointer; }
+.tag-node .caret {
+  width: 12px;
+  flex: none;
+  font-size: 9px;
+  color: var(--faint);
+  transition: transform .12s ease;
+  display: inline-block;
+}
+.tag-node .caret.open { transform: rotate(90deg); }
+.tag-node .tag-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-children[hidden] { display: none; }
+
+/* 键盘可达性 + 动效克制 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+input[type="checkbox"]:focus-visible { outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+/* 已完成待办 */
+table.todos tr.is-done .text { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+table.todos .done-at {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-left: 8px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.section-head .segmented { margin-left: auto; }

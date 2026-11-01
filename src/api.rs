@@ -215,6 +215,7 @@ async fn read_file(State(st): State<Arc<AppState>>, AxumPath(path): AxumPath<Str
         return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "文件不存在"));
     }
     let content = std::fs::read_to_string(&abs).map_err(ApiError::internal)?;
+    let content = content.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(content);
     let mtime = mtime_ms(&abs);
     Ok(Json(json!({
         "path": st.relative(&abs),
@@ -334,6 +335,9 @@ struct TodoParams {
     /// 只返回带该标签（含子标签）的待办
     #[serde(default)]
     tag: Option<String>,
+    /// open / done / all（默认 open）
+    #[serde(default)]
+    status: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
     #[serde(default)]
@@ -345,7 +349,11 @@ async fn list_todos(
     Query(p): Query<TodoParams>,
 ) -> Json<Value> {
     let index = st.index.read().await;
-    let mut rows = index.open_todos();
+    let mut rows = match p.status.as_deref() {
+        Some("done") => index.all_todos().into_iter().filter(|r| r.done).collect::<Vec<_>>(),
+        Some("all") => index.all_todos(),
+        _ => index.open_todos(),
+    };
 
     if let Some(tag) = p
         .tag

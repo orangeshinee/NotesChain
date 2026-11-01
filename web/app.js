@@ -9,8 +9,10 @@ const state = {
   scheduleRange: 'week',
   links: false,
   todoLimit: 1000,
+  todoStatus: 'open',
   duplicateNames: [],
   largeAssets: [],
+  collapsedTags: new Set(),
   leafEls: new Map(),
 };
 
@@ -284,7 +286,7 @@ async function showHome() {
   main.append(wrap);
   try {
     const [todos, git, schedule] = await Promise.all([
-      api('/api/todos?limit=' + state.todoLimit),
+      api('/api/todos?status=' + state.todoStatus + '&limit=' + state.todoLimit),
       api('/api/git/status').catch(() => null),
       api('/api/schedule?range=' + state.scheduleRange).catch(() => null),
     ]);
@@ -367,7 +369,19 @@ function buildTodoSection(todos, onShowAll) {
   const section = el('section', 'todos-section');
   const head = el('div', 'section-head');
   head.append(el('h2', '', '待办'));
-  head.append(el('span', 'muted', `${todos.total} 条未完成`));
+  head.append(el('span', 'muted', state.todoStatus === 'done' ? `${todos.total} 条已完成` : `${todos.total} 条未完成`));
+
+  const toggle = el('span', 'segmented');
+  for (const [value, label] of [['open', '未完成'], ['done', '已完成'], ['all', '全部']]) {
+    const btn = el('button', state.todoStatus === value ? 'seg active' : 'seg', label);
+    btn.type = 'button';
+    btn.addEventListener('click', () => {
+      state.todoStatus = value;
+      showHome();
+    });
+    toggle.append(btn);
+  }
+  head.append(toggle);
   section.append(head, buildTodoTable(todos.items));
 
   if (todos.total > todos.items.length) {
@@ -410,13 +424,16 @@ function buildTodoTable(items) {
     const tdCheck = el('td', 'check');
     const box = document.createElement('input');
     box.type = 'checkbox';
+    box.checked = !!todo.done;
     box.addEventListener('change', () => toggleTodo(tr, box));
     tdCheck.append(box);
+    if (todo.done) tr.classList.add('is-done');
 
     const tdText = el('td');
     if (todo.indent) tdText.style.paddingLeft = `${10 + todo.indent * 8}px`;
     const text = el('span', 'text', (todo.indent ? '· ' : '') + todo.text);
     tdText.append(text);
+    if (todo.done_at) tdText.append(el('span', 'done-at', '✅ ' + todo.done_at));
 
     const tdFile = el('td');
     const file = el('span', 'file', todo.path);
@@ -882,22 +899,48 @@ function renderTagTree(nodes) {
     tagTree.append(el('div', 'empty-state', '还没有标签。'));
     return;
   }
+
   const walk = (list, depth, container) => {
     for (const node of list) {
-      const row = el('div', 'tag-node', node.name);
-      row.style.paddingLeft = `${8 + depth * 12}px`;
+      const hasChildren = node.children && node.children.length > 0;
+      const row = el('div', 'tag-node');
+      row.style.paddingLeft = `${6 + depth * 12}px`;
       row.title = '#' + node.path;
-      row.append(el('span', 'n', `${node.notes} 篇 / ${node.todos} 待办`));
       row.dataset.tag = node.path;
+
+      const caret = el('span', 'caret', hasChildren ? '▸' : '');
+      if (hasChildren) {
+        const collapsed = state.collapsedTags.has(node.path);
+        caret.classList.toggle('open', !collapsed);
+        caret.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const sub = row.nextElementSibling;
+          if (!sub) return;
+          if (state.collapsedTags.has(node.path)) state.collapsedTags.delete(node.path);
+          else state.collapsedTags.add(node.path);
+          sub.hidden = !sub.hidden;
+          caret.classList.toggle('open', !sub.hidden);
+        });
+      }
+
+      row.append(caret);
+      row.append(el('span', 'tag-name', node.name));
+      row.append(el('span', 'n', `${node.notes} 篇 / ${node.todos} 待办`));
       row.addEventListener('click', () => go('/tag/' + encodeURIComponent(node.path)));
       container.append(row);
-      if (node.children && node.children.length) walk(node.children, depth + 1, container);
+
+      if (hasChildren) {
+        const sub = el('div', 'tag-children');
+        sub.hidden = state.collapsedTags.has(node.path);
+        container.append(sub);
+        walk(node.children, depth + 1, sub);
+      }
     }
   };
+
   walk(nodes, 0, tagTree);
   document.getElementById('tag-count').textContent = String(nodes.length);
 }
-
 function markActive() {
   for (const [path, leaf] of state.leafEls) leaf.classList.toggle('active', path === state.activePath);
   for (const row of tagTree.querySelectorAll('.tag-node')) {
