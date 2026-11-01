@@ -84,6 +84,9 @@ cargo clippy --all-targets
 # 3) 端到端冒烟（18 项，会在 .demo\smoke-notes 造语料）
 pwsh -File tools\smoke.ps1
 
+# 3.5) 真实浏览器交互（悬停预览、点击待办）——需要先起服务并把带 token 的地址传进去
+# pwsh -File tools\browser-probe.ps1 -Url "http://127.0.0.1:8080/?token=..." -Hash "#/file/2026/11/2026-11-01.md"
+
 # 4) 性能（可选，1000 文件语料）
 node tools\gen-corpus.js .demo\perf-notes
 #   然后按 docs\perf-report.md 的测法手工计时
