@@ -683,6 +683,29 @@ async function showFile(path, line) {
   const layout = el('div', 'file-layout');
   const outline = el('aside', 'outline');
   layout.append(wrap, outline);
+
+  const article = el('article', 'doc preview');
+  article.hidden = true;
+  wrap.append(article);
+
+  const previewBtn = el('button', 'seg', '预览');
+  previewBtn.type = 'button';
+  previewBtn.title = '在渲染视图与编辑视图之间切换';
+  previewBtn.addEventListener('click', () => {
+    state.previewMode = !state.previewMode;
+    if (state.previewMode) {
+      article.replaceChildren(...renderPreviewNodes(data.content, path));
+      article.hidden = false;
+      host.hidden = true;
+      previewBtn.textContent = '编辑';
+    } else {
+      article.hidden = true;
+      host.hidden = false;
+      previewBtn.textContent = '预览';
+    }
+  });
+  head.append(previewBtn);
+
   main.replaceChildren(head, layout);
   renderOutline(outline, data.content);
 
@@ -808,6 +831,44 @@ async function mountBacklinks(wrap, path) {
   }
 }
 
+function renderPreviewNodes(content, filePath) {
+  const article = document.createElement('div');
+  article.innerHTML = renderMarkdown(content);
+  const assetFor = (p) => '/api/asset?path=' + encodeURIComponent(p) + '&from=' + encodeURIComponent(filePath);
+
+  article.querySelectorAll('.img-ph').forEach((span) => {
+    const src = span.getAttribute('title') || '';
+    const img = document.createElement('img');
+    img.className = 'preview-img';
+    img.alt = span.textContent;
+    img.src = assetFor(src);
+    img.addEventListener('error', () => {
+      span.textContent = '🖼 ' + (span.textContent || src);
+      img.replaceWith(span);
+    });
+    span.replaceWith(img);
+  });
+
+  article.querySelectorAll('.link-ph').forEach((span) => {
+    const href = span.getAttribute('title') || '';
+    const link = document.createElement('a');
+    link.textContent = span.textContent;
+    link.href = '#';
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      openHref(href);
+    });
+    span.replaceWith(link);
+  });
+
+  article.querySelectorAll('.wikilink').forEach((span) => {
+    const target = span.textContent;
+    span.style.cursor = 'pointer';
+    span.addEventListener('click', () => openLink(target));
+  });
+
+  return Array.from(article.childNodes);
+}
 function renderOutline(container, content) {
   container.replaceChildren();
   container.append(el('div', 'outline-head', '大纲'));
@@ -928,21 +989,6 @@ function highlightLine(lineNumber) {
   view.dispatch({ selection: { anchor: line.from, head: line.to }, scrollIntoView: true });
   view.focus();
 }
-function scrollToLine(line) {
-  const blocks = Array.from(document.querySelectorAll('.doc [data-line]'));
-  let target = null;
-  for (const block of blocks) {
-    const ln = Number(block.dataset.line);
-    if (Number.isFinite(ln) && ln <= line) target = block;
-    else if (target) break;
-  }
-  if (target) {
-    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    target.classList.add('ln-highlight');
-    setTimeout(() => target.classList.remove('ln-highlight'), 2200);
-  }
-}
-
 async function showSearch(q) {
   state.activePath = null;
   markActive();

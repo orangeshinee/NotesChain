@@ -946,3 +946,14 @@ table.todos th { position: relative; user-select: none; }
 }
 .hover-missing { color: var(--faint); font-size: 12px; }
 .cm-hover-img { max-width: 320px; max-height: 220px; display: block; border-radius: 6px; }
+
+/* 预览模式 */
+.doc.preview { font-size: 14.5px; line-height: 1.75; }
+.doc.preview a { color: var(--accent); }
+.doc.preview .preview-img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--line-soft);
+  margin: 8px 0;
+}
+.doc.preview .wikilink { color: var(--accent); border-bottom: 1px dashed var(--line); }

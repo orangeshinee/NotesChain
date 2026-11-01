@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [string]$Screenshot = "",
@@ -222,6 +222,32 @@ try {
 })()
 '@
     $results += "tag => " + (Eval-Js $ws $js ([ref]$id))
+  }
+
+  if (& $want "preview") {
+    Reload-Page $ws ($Url + $Hash) ([ref]$id)
+    $id++
+    $js = @'
+(async () => {
+  const btn = Array.from(document.querySelectorAll('.doc-head .seg')).find((b) => b.textContent.trim() === '预览');
+  if (!btn) return 'no-preview-button';
+  btn.click();
+  await new Promise((r) => setTimeout(r, 800));
+  const article = document.querySelector('.doc.preview');
+  const stats = {
+    visible: !!(article && !article.hidden),
+    headings: article ? article.querySelectorAll('h1,h2,h3').length : 0,
+    tables: article ? article.querySelectorAll('table').length : 0,
+    images: article ? article.querySelectorAll('img.preview-img').length : 0,
+    links: article ? article.querySelectorAll('a').length : 0,
+  };
+  btn.click();
+  await new Promise((r) => setTimeout(r, 300));
+  stats.editorBack = !!document.querySelector('.editor-host:not([hidden]) .cm-editor');
+  return JSON.stringify(stats);
+})()
+'@
+    $results += "preview => " + (Eval-Js $ws $js ([ref]$id))
   }
 
   if (& $want "resize") {
