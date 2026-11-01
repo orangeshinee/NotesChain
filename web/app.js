@@ -347,7 +347,34 @@ function buildSchedule(data) {
     toggle.append(btn);
   }
   head.append(toggle);
-  section.append(head);
+
+  const addInput = el('input', 'quick-add');
+  addInput.placeholder = '加一条日程，格式：15:00-16:00 会议 @地点（写入今天）';
+  addInput.addEventListener('keydown', async (event) => {
+    if (event.key !== 'Enter') return;
+    const text = addInput.value.trim();
+    if (!text) return;
+    addInput.disabled = true;
+    try {
+      await api('/api/schedule/append', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      addInput.value = '';
+      state.scheduleRange = 'today';
+      await showHome();
+      const next = document.querySelector('.schedule .quick-add');
+      if (next) next.focus();
+    } catch (err) {
+      addInput.disabled = false;
+      window.alert('添加失败：' + (err.message || err));
+    }
+  });
+  const addRow = el('div', 'quick-add-row');
+  addRow.append(addInput);
+
+  section.append(head, addRow);
 
   const days = (data && data.days) || [];
   if (!days.length) {

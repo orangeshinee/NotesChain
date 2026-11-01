@@ -29,6 +29,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/files/*path", get(read_file).put(save_file))
         .route("/api/todos", get(list_todos).patch(patch_todo))
         .route("/api/todos/append", post(append_todo))
+        .route("/api/schedule/append", post(append_schedule))
         .route("/api/tags", get(list_tags))
         .route("/api/search", get(search))
         .route("/api/schedule", get(schedule_view))
@@ -492,18 +493,18 @@ struct AppendTodoRequest {
     path: Option<String>,
 }
 
-fn insert_todo_line(content: &str, line: &str) -> (String, usize) {
+fn insert_into_section(content: &str, heading: &str, line: &str) -> (String, usize) {
     let lines: Vec<&str> = content.lines().collect();
     // 找 `## 待办` 段
-    let mut heading: Option<usize> = None;
+    let mut heading_idx: Option<usize> = None;
     for (idx, text) in lines.iter().enumerate() {
-        if text.trim() == "## 待办" {
-            heading = Some(idx);
+        if text.trim() == heading {
+            heading_idx = Some(idx);
             break;
         }
     }
 
-    match heading {
+    match heading_idx {
         Some(h) => {
             // 段尾：下一个一级/二级标题之前
             let mut end = lines.len();
@@ -535,7 +536,7 @@ fn insert_todo_line(content: &str, line: &str) -> (String, usize) {
             if !text.is_empty() {
                 text.push_str("\n\n");
             }
-            text.push_str("## 待办\n\n");
+            text.push_str(&format!("{heading}\n\n"));
             text.push_str(line);
             text.push('\n');
             let count = text.lines().count();
@@ -574,7 +575,64 @@ async fn append_todo(
         DAILY_TEMPLATE.replace("YYYY-MM-DD", &today)
     };
 
-    let (updated, line_no) = insert_todo_line(&content, &format!("- [ ] {text}"));
+    let (updated, line_no) = insert_into_section(&content, "## 待办", &format!("- [ ] {text}"));
+    if !exists {
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
+        }
+    }
+    todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
+    st.index
+        .write()
+        .await
+        .upsert(&st.root, &rel)
+        .map_err(ApiError::internal)?;
+    st.git.notify();
+    st.revision
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    Ok(Json(json!({
+        "path": rel,
+        "line": line_no,
+        "version": crate::index::version_of(mtime_ms(&abs), &updated),
+    })))
+}
+#[derive(Deserialize)]
+struct AppendScheduleRequest {
+    text: String,
+}
+
+async fn append_schedule(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<AppendScheduleRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let raw = body.text.trim();
+    if raw.is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "内容为空"));
+    }
+    if raw.contains('\n') {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "一次只能添加一条"));
+    }
+    let line = if raw.starts_with('-') {
+        raw.to_string()
+    } else {
+        format!("- {raw}")
+    };
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let rel = format!("{}/{}/{}.md", &today[..4], &today[5..7], today);
+    let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
+    let lock = st.lock_for(&rel).await;
+    let _guard = lock.lock().await;
+
+    let exists = abs.is_file();
+    let content = if exists {
+        std::fs::read_to_string(&abs).map_err(ApiError::internal)?
+    } else {
+        DAILY_TEMPLATE.replace("YYYY-MM-DD", &today)
+    };
+
+    let (updated, line_no) = insert_into_section(&content, "## 今日日程", &line);
     if !exists {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
