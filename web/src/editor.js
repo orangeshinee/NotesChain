@@ -9,6 +9,7 @@ import {
   ViewPlugin,
   Decoration,
   WidgetType,
+  hoverTooltip,
 } from '@codemirror/view';
 import { EditorState, RangeSetBuilder, StateField } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -307,6 +308,62 @@ const tableField = StateField.define({
   update: (deco, tr) => (tr.docChanged || tr.selection ? buildTableDecorations(tr.state) : deco),
   provide: (field) => EditorView.decorations.from(field),
 });
+/** 悬浮预览：双链给出目标摘要，图片给出缩略图 */
+function hoverPreviewExtension(assetFor, previewFor) {
+  return hoverTooltip((view, pos) => {
+    const line = view.state.doc.lineAt(pos);
+    const text = line.text;
+    const offset = pos - line.from;
+
+    for (const m of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) {
+      if (offset >= m.index && offset <= m.index + m[0].length) {
+        const target = m[1].trim();
+        return {
+          pos: line.from + m.index,
+          end: line.from + m.index + m[0].length,
+          above: true,
+          create() {
+            const dom = document.createElement('div');
+            dom.className = 'cm-hover-card';
+            dom.textContent = '[[' + target + ']]';
+            if (previewFor) {
+              previewFor(target)
+                .then((html) => {
+                  dom.innerHTML = html;
+                })
+                .catch(() => {
+                  /* 预览失败保留目标名 */
+                });
+            }
+            return { dom };
+          },
+        };
+      }
+    }
+
+    for (const m of text.matchAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g)) {
+      if (offset >= m.index && offset <= m.index + m[0].length) {
+        return {
+          pos: line.from + m.index,
+          end: line.from + m.index + m[0].length,
+          above: true,
+          create() {
+            const dom = document.createElement('div');
+            dom.className = 'cm-hover-card';
+            const img = document.createElement('img');
+            img.className = 'cm-hover-img';
+            img.src = assetFor(m[2]);
+            img.alt = m[1] || '';
+            dom.append(img);
+            return { dom };
+          },
+        };
+      }
+    }
+
+    return null;
+  });
+}
 function buildDecorations(view, assetFor, linksEnabled, linkExists) {
   const builder = new RangeSetBuilder();
   const activeLines = new Set();
@@ -439,6 +496,7 @@ export function create(opts) {
         syntaxHighlighting(highlight),
         livePreviewExtension(assetFor || ((p) => p), onToggleTodo, !!links, opts.linkExists || null),
         tableField,
+        hoverPreviewExtension(assetFor || ((p) => p), opts.previewFor || null),
         theme,
         keymap.of([
           {

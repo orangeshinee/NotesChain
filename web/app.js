@@ -749,6 +749,18 @@ async function showFile(path, line) {
     onOpenLink: openLink,
     onOpenHref: openHref,
     linkExists: (target) => state.pathSet.has(resolveLinkPath(target)),
+    previewFor: async (target) => {
+      const linkPath = resolveLinkPath(target);
+      try {
+        const file = await api('/api/files/' + encodeURI(linkPath));
+        const lines = file.content.split('\n').filter((line) => line.trim()).slice(0, 8);
+        const title = esc(linkPath);
+        const body = esc(lines.join('\n')).slice(0, 600);
+        return `<div class="hover-title">${title}</div><pre class="hover-body">${body}</pre>`;
+      } catch (err) {
+        return `<div class="hover-title">${esc(linkPath)}</div><div class="hover-missing">该笔记还不存在，点击可新建</div>`;
+      }
+    },
     onToggleTodo: async (info) => {
       // 编辑器里点待办复选框：直接按行回写，不走整文件保存
       const res = await api('/api/todos', {
