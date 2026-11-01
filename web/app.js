@@ -6,7 +6,7 @@ const state = {
   activePath: null,
   activeTag: null,
   searchStatus: 'all',
-  previewMode: false,
+  previewMode: true,
   scheduleRange: 'week',
   scheduleData: null,
   scheduleTimer: null,

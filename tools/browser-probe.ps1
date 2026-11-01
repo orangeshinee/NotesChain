@@ -39,15 +39,15 @@ function Receive-Cdp($ws, $timeoutMs = 5000) {
   return $null
 }
 
-function Eval-Js($ws, $expression, [ref]$id) {
-  $id.Value++
-  Send-Cdp $ws $id.Value "Runtime.evaluate" @{ expression = $expression; returnByValue = $true; awaitPromise = $true }
+function Eval-Js($ws, $expression) {
+  $script:cdpSeq++
+  Send-Cdp $ws $script:cdpSeq "Runtime.evaluate" @{ expression = $expression; returnByValue = $true; awaitPromise = $true }
   $deadline = (Get-Date).AddSeconds(20)
   while ((Get-Date) -lt $deadline) {
     $msg = Receive-Cdp $ws 1500
     if (-not $msg) { continue }
     $obj = $msg | ConvertFrom-Json
-    if ($obj.id -eq $id.Value) {
+    if ($obj.id -eq $script:cdpSeq) {
       if ($obj.result -and $obj.result.exceptionDetails) {
         $desc = $obj.result.exceptionDetails.exception.description
         return "JS-ERROR: " + ([string]$desc).Split("`n")[0]
@@ -60,34 +60,34 @@ function Eval-Js($ws, $expression, [ref]$id) {
 }
 
 # 每个场景前重新加载页面，避免上一个场景的状态干扰
-function Reload-Page($ws, $url, [ref]$id) {
-  $id.Value++
-  Send-Cdp $ws $id.Value "Page.navigate" @{ url = $url }
+function Reload-Page($ws, $url) {
+  $script:cdpSeq++
+  Send-Cdp $ws $script:cdpSeq "Page.navigate" @{ url = $url }
   Start-Sleep -Seconds 2
 }
 # 真·键盘输入：先用鼠标点进编辑器，再用 CDP Input.insertText
-function EnsureEdit($ws, [ref]$id) {
-  $id.Value++
+function EnsureEdit($ws) {
+  $script:cdpSeq++
   $null = Eval-Js $ws "(() => { const b = Array.from(document.querySelectorAll('.doc-head .seg')).find((x) => x.textContent.trim() === '编辑'); if (b) b.click(); return 'ok'; })()" $id
   Start-Sleep -Milliseconds 700
 }
 
-function Focus-And-Type($ws, $text, [ref]$id) {
-  EnsureEdit $ws $id
-  $id.Value++
+function Focus-And-Type($ws, $text) {
+  EnsureEdit $ws
+  $script:cdpSeq++
   $rect = Eval-Js $ws "(() => { const c = document.querySelector('.cm-content'); if (!c) return null; c.focus(); const r = c.getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + 120), y: Math.round(r.top + 40) }); })()" $id
   if (-not $rect) { return "no-editor" }
   $p = $rect | ConvertFrom-Json
-  $id.Value++
-  Send-Cdp $ws $id.Value "Input.dispatchMouseEvent" @{ type = "mousePressed"; x = $p.x; y = $p.y; button = "left"; clickCount = 1 }
-  $id.Value++
-  Send-Cdp $ws $id.Value "Input.dispatchMouseEvent" @{ type = "mouseReleased"; x = $p.x; y = $p.y; button = "left"; clickCount = 1 }
+  $script:cdpSeq++
+  Send-Cdp $ws $script:cdpSeq "Input.dispatchMouseEvent" @{ type = "mousePressed"; x = $p.x; y = $p.y; button = "left"; clickCount = 1 }
+  $script:cdpSeq++
+  Send-Cdp $ws $script:cdpSeq "Input.dispatchMouseEvent" @{ type = "mouseReleased"; x = $p.x; y = $p.y; button = "left"; clickCount = 1 }
   Start-Sleep -Milliseconds 200
-  $id.Value++
-  Send-Cdp $ws $id.Value "Input.insertText" @{ text = $text }
+  $script:cdpSeq++
+  Send-Cdp $ws $script:cdpSeq "Input.insertText" @{ text = $text }
   Start-Sleep -Milliseconds 1600
-  $id.Value++
-  return Eval-Js $ws "document.querySelector('.status')?.textContent || ''" $id
+  $script:cdpSeq++
+  return Eval-Js $ws "document.querySelector('.status')?.textContent || ''"
 }
 
 try {
@@ -106,20 +106,20 @@ try {
   $ws = New-Object System.Net.WebSockets.ClientWebSocket
   $ws.ConnectAsync([Uri]$page.webSocketDebuggerUrl, [Threading.CancellationToken]::None).Wait()
 
-  $id = 0
+  $script:cdpSeq = 0
   Send-Cdp $ws 0 "Page.enable" @{}
   Send-Cdp $ws 0 "Runtime.enable" @{}
-  $id = 10
-  Send-Cdp $ws $id "Page.navigate" @{ url = ($Url + $Hash) }
+  $script:cdpSeq = 10
+  Send-Cdp $ws $script:cdpSeq "Page.navigate" @{ url = ($Url + $Hash) }
   Start-Sleep -Seconds 3
 
   $results = @()
   $want = { param($name) $Scenario -eq "all" -or $Scenario -eq $name }
 
   if (& $want "hover") {
-    Reload-Page $ws ($Url + $Hash) ([ref]$id)
-    EnsureEdit $ws ([ref]$id)
-    $id++
+    Reload-Page $ws ($Url + $Hash) 
+    EnsureEdit $ws 
+    $script:cdpSeq++
     $js = @'
 (async () => {
   const span = document.querySelector('.cm-wikilink');
@@ -134,13 +134,13 @@ try {
   return tip ? (tip.innerText || '').slice(0, 120) : 'no-tooltip';
 })()
 '@
-    $results += "hover => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "hover => " + (Eval-Js $ws $js )
   }
 
   if (& $want "todo") {
-    Reload-Page $ws ($Url + $Hash) ([ref]$id)
-    EnsureEdit $ws ([ref]$id)
-    $id++
+    Reload-Page $ws ($Url + $Hash) 
+    EnsureEdit $ws 
+    $script:cdpSeq++
     $js = @'
 (async () => {
   const box = document.querySelector('.cm-todo-box');
@@ -151,14 +151,14 @@ try {
   return JSON.stringify({ before, status: document.querySelector('.status')?.textContent || '' });
 })()
 '@
-    $results += "todo => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "todo => " + (Eval-Js $ws $js )
   }
 
   if (& $want "autosave") {
-    Reload-Page $ws ($Url + $Hash) ([ref]$id)
-    $typed = Focus-And-Type $ws "`n<!-- autosave-marker -->`n" ([ref]$id)
+    Reload-Page $ws ($Url + $Hash) 
+    $typed = Focus-And-Type $ws "`n<!-- autosave-marker -->`n" 
     Start-Sleep -Milliseconds 500
-    $id++
+    $script:cdpSeq++
     $verify = Eval-Js $ws @'
 (async () => {
   const path = decodeURIComponent(location.hash.replace('#/file/', ''));
@@ -166,21 +166,21 @@ try {
   const data = await resp.json();
   return JSON.stringify({ status: document.querySelector('.status')?.textContent || '', marker: (data.content || '').includes('autosave-marker') });
 })()
-'@ ([ref]$id)
+'@ 
     $results += "autosave => status=$typed, verify=$verify"
   }
 
   if (& $want "conflict" -and $NotesDir) {
-    Reload-Page $ws ($Url + $Hash) ([ref]$id)
+    Reload-Page $ws ($Url + $Hash) 
     # 页面已加载后，外部改文件使版本号失效
     $rel = [uri]::UnescapeDataString(($Hash -replace '^#/file/', ''))
     $disk = Join-Path $NotesDir $rel.Replace('/', '\')
     if (Test-Path $disk) {
       Add-Content -Path $disk -Value "`n外部改了一行`n" -Encoding utf8
       Start-Sleep -Milliseconds 300
-      $typed = Focus-And-Type $ws "`n冲突测试`n" ([ref]$id)
-      $id++
-      $banner = Eval-Js $ws "document.querySelector('.conflict-bar') ? document.querySelector('.conflict-bar').innerText.slice(0,80) : 'no-banner'" ([ref]$id)
+      $typed = Focus-And-Type $ws "`n冲突测试`n" 
+      $script:cdpSeq++
+      $banner = Eval-Js $ws "document.querySelector('.conflict-bar') ? document.querySelector('.conflict-bar').innerText.slice(0,80) : 'no-banner'" 
       $results += "conflict => status=$typed, banner=$banner"
     } else {
       $results += "conflict => 跳过（找不到文件 $disk）"
@@ -188,8 +188,8 @@ try {
   }
 
   if (& $want "search") {
-    Reload-Page $ws ($Url + "#/search/" + [uri]::EscapeDataString("测试")) ([ref]$id)
-    $id++
+    Reload-Page $ws ($Url + "#/search/" + [uri]::EscapeDataString("测试")) 
+    $script:cdpSeq++
     $js = @'
 (async () => {
   const li = document.querySelector('.results li');
@@ -203,12 +203,12 @@ try {
   });
 })()
 '@
-    $results += "search => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "search => " + (Eval-Js $ws $js )
   }
 
   if (& $want "tag") {
-    Reload-Page $ws ($Url + "#/tag/" + [uri]::EscapeDataString("测试")) ([ref]$id)
-    $id++
+    Reload-Page $ws ($Url + "#/tag/" + [uri]::EscapeDataString("测试")) 
+    $script:cdpSeq++
     $js = @'
 (async () => {
   const right = document.querySelector('.doc-head .right')?.textContent || '';
@@ -218,38 +218,42 @@ try {
   return JSON.stringify({ right, rows, notes, carets });
 })()
 '@
-    $results += "tag => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "tag => " + (Eval-Js $ws $js )
   }
 
   if (& $want "preview") {
-    Reload-Page $ws ($Url + $Hash) ([ref]$id)
-    $id++
+    Reload-Page $ws ($Url + $Hash)
     $js = @'
 (async () => {
-  const btn = Array.from(document.querySelectorAll('.doc-head .seg')).find((b) => b.textContent.trim() === '预览');
-  if (!btn) return 'no-preview-button';
-  btn.click();
-  await new Promise((r) => setTimeout(r, 800));
+  const findBtn = () =>
+    Array.from(document.querySelectorAll('.doc-head .seg')).find((b) =>
+      ['预览', '编辑'].includes(b.textContent.trim())
+    );
+  let btn = findBtn();
+  if (!btn) return 'no-toggle-button';
   const article = document.querySelector('.doc.preview');
   const stats = {
-    visible: !!(article && !article.hidden),
+    defaultPreview: !!(article && !article.hidden),
     headings: article ? article.querySelectorAll('h1,h2,h3').length : 0,
     tables: article ? article.querySelectorAll('table').length : 0,
     images: article ? article.querySelectorAll('img.preview-img').length : 0,
     links: article ? article.querySelectorAll('a').length : 0,
   };
   btn.click();
-  await new Promise((r) => setTimeout(r, 300));
-  stats.editorBack = !!document.querySelector('.editor-host:not([hidden]) .cm-editor');
+  await new Promise((r) => setTimeout(r, 500));
+  stats.editorVisible = !!document.querySelector('.editor-host:not([hidden]) .cm-editor');
+  const btn2 = findBtn();
+  if (btn2) btn2.click();
+  await new Promise((r) => setTimeout(r, 500));
+  stats.previewAgain = !!document.querySelector('.doc.preview:not([hidden])');
   return JSON.stringify(stats);
 })()
 '@
-    $results += "preview => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "preview => " + (Eval-Js $ws $js)
   }
-
   if (& $want "virtual") {
-    Reload-Page $ws ($Url + "#/") ([ref]$id)
-    $id++
+    Reload-Page $ws ($Url + "#/") 
+    $script:cdpSeq++
     $js = @'
 (async () => {
   const main = document.querySelector('.main');
@@ -263,13 +267,13 @@ try {
   return JSON.stringify({ first, afterScroll: count(), total });
 })()
 '@
-    $results += "virtual => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "virtual => " + (Eval-Js $ws $js )
   }
 
   if (& $want "clicks") {
-    Reload-Page $ws ($Url + $Hash) ([ref]$id)
-    EnsureEdit $ws ([ref]$id)
-    $id++
+    Reload-Page $ws ($Url + $Hash) 
+    EnsureEdit $ws 
+    $script:cdpSeq++
     $js = @'
 (async () => {
   const out = {};
@@ -292,22 +296,22 @@ try {
   return JSON.stringify(out);
 })()
 '@
-    $results += "clicks => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "clicks => " + (Eval-Js $ws $js )
   }
 
   if (& $want "quickadd") {
-    Reload-Page $ws ($Url + "#/") ([ref]$id)
-    $id++
-    $filled = Eval-Js $ws "(() => { const i = document.querySelector('.todos-section .quick-add'); if (!i) return 'no-input'; i.scrollIntoView({ block: 'center' }); i.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(i, '探针加的待办 #探针'); i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return 'dispatched'; })()" ([ref]$id)
+    Reload-Page $ws ($Url + "#/") 
+    $script:cdpSeq++
+    $filled = Eval-Js $ws "(() => { const i = document.querySelector('.todos-section .quick-add'); if (!i) return 'no-input'; i.scrollIntoView({ block: 'center' }); i.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(i, '探针加的待办 #探针'); i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return 'dispatched'; })()" 
     Start-Sleep -Milliseconds 2000
-    $id++
-    $check = Eval-Js $ws "JSON.stringify({ filled: '$filled', added: !!Array.from(document.querySelectorAll('table.todos .text')).find((e) => e.textContent.includes('探针加的待办')), total: document.querySelector('.doc-head .right')?.textContent || '' })" ([ref]$id)
+    $script:cdpSeq++
+    $check = Eval-Js $ws "JSON.stringify({ filled: '$filled', added: !!Array.from(document.querySelectorAll('table.todos .text')).find((e) => e.textContent.includes('探针加的待办')), total: document.querySelector('.doc-head .right')?.textContent || '' })" 
     $results += "quickadd => " + $check
   }
 
   if (& $want "schedjump") {
-    Reload-Page $ws ($Url + "#/") ([ref]$id)
-    $id++
+    Reload-Page $ws ($Url + "#/") 
+    $script:cdpSeq++
     $js = @'
 (async () => {
   const li = Array.from(document.querySelectorAll('.slots li')).find((e) => e.style.cursor === 'pointer');
@@ -323,12 +327,12 @@ try {
   });
 })()
 '@
-    $results += "schedjump => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "schedjump => " + (Eval-Js $ws $js )
   }
 
   if (& $want "export") {
-    Reload-Page $ws ($Url + $Hash) ([ref]$id)
-    $id++
+    Reload-Page $ws ($Url + $Hash) 
+    $script:cdpSeq++
     $js = @'
 (async () => {
   let printed = 0;
@@ -344,25 +348,25 @@ try {
   });
 })()
 '@
-    $results += "export => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "export => " + (Eval-Js $ws $js )
   }
 
   if (& $want "schedadd") {
-    Reload-Page $ws ($Url + "#/") ([ref]$id)
-    $id++
-    $filled = Eval-Js $ws "(() => { const i = document.querySelector('.schedule .quick-add'); if (!i) return 'no-input'; i.scrollIntoView({ block: 'center' }); i.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(i, '11:00-11:30 闸门加的日程'); i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return 'dispatched'; })()" ([ref]$id)
+    Reload-Page $ws ($Url + "#/") 
+    $script:cdpSeq++
+    $filled = Eval-Js $ws "(() => { const i = document.querySelector('.schedule .quick-add'); if (!i) return 'no-input'; i.scrollIntoView({ block: 'center' }); i.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(i, '11:00-11:30 闸门加的日程'); i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return 'dispatched'; })()" 
     Start-Sleep -Milliseconds 2200
-    $id++
-    $check = Eval-Js $ws "JSON.stringify({ filled: '$filled', added: !!Array.from(document.querySelectorAll('.slots .what')).find((e) => e.textContent.includes('闸门加的日程')), items: document.querySelectorAll('.slots li').length })" ([ref]$id)
+    $script:cdpSeq++
+    $check = Eval-Js $ws "JSON.stringify({ filled: '$filled', added: !!Array.from(document.querySelectorAll('.slots .what')).find((e) => e.textContent.includes('闸门加的日程')), items: document.querySelectorAll('.slots li').length })" 
     $results += "schedadd => " + $check
   }
 
   if (& $want "resize") {
     # 回首页测列宽拖拽
-    $id++
-    Send-Cdp $ws $id "Page.navigate" @{ url = ($Url + "#/") }
+    $script:cdpSeq++
+    Send-Cdp $ws $script:cdpSeq "Page.navigate" @{ url = ($Url + "#/") }
     Start-Sleep -Seconds 2
-    $id++
+    $script:cdpSeq++
     $js = @'
 (() => {
   const handle = document.querySelector('.col-resizer');
@@ -378,7 +382,7 @@ try {
   return JSON.stringify({ before, after, saved: localStorage.getItem('nc.todoCols') });
 })()
 '@
-    $results += "resize => " + (Eval-Js $ws $js ([ref]$id))
+    $results += "resize => " + (Eval-Js $ws $js )
   }
 
   "---- 结果 ----"
