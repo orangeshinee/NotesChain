@@ -832,6 +832,13 @@ function renderFileTree(data) {
       monthSum.append(el('span', '', `${month.month} 月`));
       monthSum.append(el('span', 'n', String(month.entries.length)));
       monthBox.append(monthSum);
+      const now = new Date();
+      if (
+        year.year === String(now.getFullYear()) &&
+        month.month === String(now.getMonth() + 1).padStart(2, '0')
+      ) {
+        monthBox.open = true;
+      }
       for (const entry of month.entries) {
         monthBox.append(fileLeaf(entry.path, entry.path.split('/').pop().replace(/\.md$/, '')));
         total++;
@@ -903,11 +910,16 @@ function setGit(git) {
     box.textContent = '';
     return;
   }
-  box.textContent = git.available
-    ? git.last_commit
-      ? '上次提交 ' + git.last_commit.slice(0, 16).replace('T', ' ')
-      : '尚无提交'
-    : '未检测到 git';
+  if (!git.available) {
+    box.textContent = '未检测到 git';
+    return;
+  }
+  const parts = [];
+  if (git.disabled) parts.push('自动提交已停止');
+  parts.push(git.last_commit ? '上次提交 ' + git.last_commit.slice(0, 16).replace('T', ' ') : '尚无提交');
+  if (git.pending_files) parts.push('待提交 ' + git.pending_files);
+  box.textContent = parts.join(' · ');
+  box.title = git.last_error ? '最近错误：' + git.last_error : '仅本地版本历史，无远程备份';
 }
 
 // ---------------------------------------------------------------- 路由
@@ -1094,6 +1106,7 @@ async function pollRevision() {
       lastRevision = data.revision;
       await refreshFromDisk();
     }
+    setGit(await api('/api/git/status').catch(() => null));
   } catch (err) {
     /* 服务重启或网络抖动：下一轮再试 */
   }
@@ -1122,6 +1135,40 @@ async function refreshFromDisk() {
   }
 }
 
+function todayPath() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}/${m}/${y}-${m}-${d}.md`;
+}
+
+const todayBtn = document.getElementById('today-link');
+if (todayBtn) {
+  todayBtn.addEventListener('click', (event) => {
+    event.preventDefault();
+    go('/file/' + encodeURIComponent(todayPath()));
+  });
+}
+
+const rebuildBtn = document.getElementById('rebuild');
+if (rebuildBtn) {
+  rebuildBtn.addEventListener('click', async () => {
+    rebuildBtn.disabled = true;
+    try {
+      const res = await api('/api/index/rebuild', { method: 'POST' });
+      await loadSidebar();
+      await route();
+      rebuildBtn.textContent = `已重建 ${res.files}`;
+      setTimeout(() => (rebuildBtn.textContent = '重建索引'), 2000);
+    } catch (err) {
+      window.alert('重建失败：' + (err.message || err));
+    } finally {
+      rebuildBtn.disabled = false;
+    }
+  });
+}
+
 const refreshBtn = document.getElementById('refresh');
 if (refreshBtn) {
   refreshBtn.addEventListener('click', async () => {
@@ -1138,6 +1185,8 @@ if (refreshBtn) {
 async function boot() {
   try {
     const cfg = await api('/api/config').catch(() => null);
+    // PRD 2.2 / 3.1：打开首页时当天文件不存在则自动新建
+    await api('/api/daily', { method: 'POST' }).catch(() => null);
     if (cfg) {
       state.links = !!cfg.links;
       state.duplicateNames = cfg.duplicateNames || [];
