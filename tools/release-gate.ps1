@@ -120,6 +120,19 @@ if (-not $SkipBrowser) {
       }
       Record "浏览器：$($c.Groups[1].Value)" $ok $value.Substring(0, [Math]::Min(70, $value.Length))
     }
+
+    "=== 7. Playwright e2e（可选层） ==="
+    if (Get-Command playwright-cli -ErrorAction SilentlyContinue) {
+      $e2eUrl = "http://127.0.0.1:$Port/?token=$token"
+      $sa = & pwsh -NoProfile -File (Join-Path $PSScriptRoot "e2e-savetype.ps1") -Url ($e2eUrl + $hash) -Session gate_e2e_save 2>&1
+      $saOk = $LASTEXITCODE -eq 0
+      Record "e2e：保存中继续输入" $saOk (($sa -join ' ' -split "`n" | Select-Object -Last 1))
+      $cb = & pwsh -NoProfile -File (Join-Path $PSScriptRoot "e2e-checkbox.ps1") -Url ($e2eUrl + $hash) -Session gate_e2e_box 2>&1
+      $cbOk = $LASTEXITCODE -eq 0
+      Record "e2e：勾选往返" $cbOk (($cb -join ' ' -split "`n" | Select-Object -Last 1))
+    } else {
+      Record "Playwright e2e" $true "SKIP：未安装 playwright-cli"
+    }
   }
   finally {
     Get-Process -Id $proc.Id -ErrorAction SilentlyContinue | Stop-Process -Force

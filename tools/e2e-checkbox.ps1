@@ -17,23 +17,24 @@ $js = @'
   const path = decodeURIComponent(location.hash.replace('#/file/', '').split('@')[0]);
   const read = () => fetch('/api/files/' + encodeURIComponent(path)).then((r) => r.json());
   const countDone = (text) => (text.split('\n').filter((l) => l.includes('✅') && /^\s*- \[[xX]\]/.test(l)).length);
-  const box1 = document.querySelector('.cm-todo-box');
-  if (!box1) return JSON.stringify({ error: 'no-checkbox' });
+  const boxes = Array.from(document.querySelectorAll('.cm-todo-box'));
+  const idx = boxes.findIndex((b) => !b.checked);
+  if (idx < 0) return JSON.stringify({ error: 'no-open-checkbox' });
   const before = await read();
-  box1.click();
+  boxes[idx].click();
   await new Promise((r) => setTimeout(r, 1800));
   const mid = await read();
-  const box2 = document.querySelector('.cm-todo-box');
-  if (!box2) return JSON.stringify({ error: 'no-checkbox-2' });
-  box2.click();
+  const boxes2 = Array.from(document.querySelectorAll('.cm-todo-box'));
+  if (!boxes2[idx]) return JSON.stringify({ error: 'no-checkbox-2' });
+  boxes2[idx].click();
   await new Promise((r) => setTimeout(r, 1800));
   const after = await read();
   return JSON.stringify({
     beforeDone: countDone(before.content),
     midDone: countDone(mid.content),
     afterDone: countDone(after.content),
-    midOk: countDone(mid.content) === 1,
-    afterOk: countDone(after.content) === 0
+    midOk: countDone(mid.content) === countDone(before.content) + 1,
+    afterOk: countDone(after.content) === countDone(before.content)
   });
 })()
 '@

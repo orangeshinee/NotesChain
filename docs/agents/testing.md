@@ -6,7 +6,7 @@
 pwsh -File tools/release-gate.ps1
 ```
 
-依次跑：构建 → `cargo test` → `cargo clippy` → 接口冒烟 → 边界场景 → 平替预演 → 浏览器交互，输出汇总表，非零退出即失败。**提交前必须全绿。**
+依次跑：构建 → `cargo test` → `cargo clippy` → 接口冒烟 → 边界场景 → 平替预演 → 浏览器交互（逐场景）→ **Playwright e2e（可选层**，检测到 `playwright-cli` 才跑，否则记 SKIP）。输出汇总表，非零退出即失败。**提交前必须全绿。**
 
 > 不要在任何文档里写死「N 个测试 / N 项检查」——增删测试就会过期，只写命令。
 
