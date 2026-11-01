@@ -48,6 +48,10 @@ function Eval-Js($ws, $expression, [ref]$id) {
     if (-not $msg) { continue }
     $obj = $msg | ConvertFrom-Json
     if ($obj.id -eq $id.Value) {
+      if ($obj.result -and $obj.result.exceptionDetails) {
+        $desc = $obj.result.exceptionDetails.exception.description
+        return "JS-ERROR: " + ([string]$desc).Split("`n")[0]
+      }
       if ($obj.result -and $obj.result.result) { return $obj.result.result.value }
       return $null
     }

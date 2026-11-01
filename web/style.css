@@ -957,3 +957,12 @@ table.todos th { position: relative; user-select: none; }
   margin: 8px 0;
 }
 .doc.preview .wikilink { color: var(--accent); border-bottom: 1px dashed var(--line); }
+
+.preview-todo {
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}

@@ -688,13 +688,15 @@ async function showFile(path, line) {
   article.hidden = true;
   wrap.append(article);
 
+  // 注意：预览保持只读。曾尝试在预览里勾选待办，成功后会顺手把隐藏中的编辑器 setValue，
+  // 实测 CodeMirror 在 display:none 容器里会陷入测量死循环、整页卡死 —— 已回退。
   const previewBtn = el('button', 'seg', '预览');
   previewBtn.type = 'button';
   previewBtn.title = '在渲染视图与编辑视图之间切换';
   previewBtn.addEventListener('click', () => {
     state.previewMode = !state.previewMode;
     if (state.previewMode) {
-      article.replaceChildren(...renderPreviewNodes(data.content, path));
+      article.replaceChildren(...renderPreviewNodes(currentEditor ? currentEditor.getValue() : data.content, path));
       article.hidden = false;
       host.hidden = true;
       previewBtn.textContent = '编辑';
@@ -752,6 +754,7 @@ async function showFile(path, line) {
   activeDirty = () => dirty;
 
   const scheduleSave = () => {
+
     dirty = true;
     setStatus(status, 'dirty', '未保存');
     clearTimeout(saveTimer);
@@ -831,9 +834,17 @@ async function mountBacklinks(wrap, path) {
   }
 }
 
+function stripDoneMarker(line) {
+  const text = String(line || '').replace(/\s+$/, '');
+  if (!/^\s*- \[[xX]\]/.test(text)) return text;
+  const at = text.indexOf('✅');
+  return at >= 0 ? text.slice(0, at).trimEnd() : text;
+}
+
 function renderPreviewNodes(content, filePath) {
   const article = document.createElement('div');
   article.innerHTML = renderMarkdown(content);
+  const lines = content.split('\n');
   const assetFor = (p) => '/api/asset?path=' + encodeURIComponent(p) + '&from=' + encodeURIComponent(filePath);
 
   article.querySelectorAll('.img-ph').forEach((span) => {
