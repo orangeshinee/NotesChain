@@ -42,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
     let state = state::AppState::new(args.dir, args.links, !args.no_git)?;
 
     let warnings = state.rebuild_index().await?;
+    println!("  笔记目录：{}", state.notes_root.display());
     watch::start(state.clone());
     for warning in &warnings {
         eprintln!("[warn] {warning}");
@@ -55,7 +56,6 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     println!("NotesChain 已启动");
-    println!("  笔记目录：{}", state.root.display());
     println!("  索引：{file_count} 个 Markdown 文件，{todo_count} 条未完成待办");
     println!("  打开：http://127.0.0.1:{}/?token={}", args.port, state.token);
     println!("  （token 只存在于本次进程，重启后需用新地址重新打开）");

@@ -303,7 +303,7 @@ async fn save_file(
     todo_write::atomic_write(&abs, &outgoing).map_err(ApiError::internal)?;
     st.git.notify();
     st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
+    st.index.write().await.upsert(&st.notes_root, &rel).map_err(ApiError::internal)?;
 
     let mtime = mtime_ms(&abs);
     Ok(Json(json!({
@@ -473,7 +473,7 @@ async fn patch_todo(
     todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
     st.git.notify();
     st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
+    st.index.write().await.upsert(&st.notes_root, &rel).map_err(ApiError::internal)?;
 
     let mtime = mtime_ms(&abs);
     Ok(Json(json!({
@@ -585,7 +585,7 @@ async fn append_todo(
     st.index
         .write()
         .await
-        .upsert(&st.root, &rel)
+        .upsert(&st.notes_root, &rel)
         .map_err(ApiError::internal)?;
     st.git.notify();
     st.revision
@@ -642,7 +642,7 @@ async fn append_schedule(
     st.index
         .write()
         .await
-        .upsert(&st.root, &rel)
+        .upsert(&st.notes_root, &rel)
         .map_err(ApiError::internal)?;
     st.git.notify();
     st.revision
@@ -682,7 +682,7 @@ async fn ensure_daily(State(st): State<Arc<AppState>>) -> Result<Json<Value>, Ap
     todo_write::atomic_write(&abs, &content).map_err(ApiError::internal)?;
     st.git.notify();
     st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
+    st.index.write().await.upsert(&st.notes_root, &rel).map_err(ApiError::internal)?;
 
     Ok(Json(json!({
         "path": rel,
@@ -931,7 +931,7 @@ async fn git_restore(
     st.index
         .write()
         .await
-        .upsert(&st.root, &rel_path)
+        .upsert(&st.notes_root, &rel_path)
         .map_err(ApiError::internal)?;
     st.git.notify();
     st.revision
@@ -1376,11 +1376,16 @@ async fn asset(
             }
         }
     }
+    candidates.push(join_normalized(&st.assets_root, raw));
+    candidates.push(join_normalized(&st.notes_root, raw));
     candidates.push(join_normalized(&st.root, raw));
 
     for candidate in candidates {
         let candidate = crate::state::simplify(candidate);
-        if !candidate.starts_with(&st.root) || !candidate.is_file() {
+        let inside = candidate.starts_with(&st.root)
+            || candidate.starts_with(&st.notes_root)
+            || candidate.starts_with(&st.assets_root);
+        if !inside || !candidate.is_file() {
             continue;
         }
         if candidate.components().any(|c| c.as_os_str() == ".git") {

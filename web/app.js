@@ -6,6 +6,7 @@ const state = {
   activePath: null,
   activeTag: null,
   searchStatus: 'all',
+  previewMode: false,
   scheduleRange: 'week',
   scheduleData: null,
   scheduleTimer: null,
@@ -419,11 +420,9 @@ function buildSchedule(data) {
         }
         return { item, status, order: item.end ? 0 : 1 };
       });
-      decorated.sort((a, b) => {
-        if (a.status === 'live' && b.status !== 'live') return -1;
-        if (b.status === 'live' && a.status !== 'live') return 1;
-        return String(a.item.start).localeCompare(String(b.item.start)) || a.order - b.order;
-      });
+      decorated.sort(
+        (a, b) => String(a.item.start).localeCompare(String(b.item.start)) || a.order - b.order
+      );
 
       const list = el('ul', 'slots');
       for (const entry of decorated) {
@@ -647,7 +646,7 @@ function buildTodoTable(items) {
     body.append(tr);
   }
 
-  const makeRow = (todo) => {
+  const makeRow = (todo, index) => {
     const tr = el('tr');
     tr.dataset.path = todo.path;
     tr.dataset.line = todo.line;
@@ -664,12 +663,13 @@ function buildTodoTable(items) {
 
     const tdText = el('td');
     if (todo.indent) tdText.style.paddingLeft = `${10 + todo.indent * 8}px`;
+    if (typeof index === 'number') tdText.append(el('span', 'idx', String(index + 1)));
     const text = el('span', 'text', (todo.indent ? '· ' : '') + todo.text);
     tdText.append(text);
     if (todo.done_at) tdText.append(el('span', 'done-at', '✅ ' + todo.done_at));
 
     const tdFile = el('td');
-    const file = el('span', 'file', todo.path);
+    const file = el('span', 'file', todo.path.replace(/\\.md$/i, ''));
     file.append(el('span', 'ln', ':' + todo.line));
     file.addEventListener('click', () => go('/file/' + encodeURIComponent(todo.path)));
     tdFile.append(file);
@@ -700,7 +700,7 @@ function buildTodoTable(items) {
   const appendChunk = () => {
     const end = Math.min(rendered + CHUNK, items.length);
     const frag = document.createDocumentFragment();
-    for (let i = rendered; i < end; i += 1) frag.append(makeRow(items[i]));
+    for (let i = rendered; i < end; i += 1) frag.append(makeRow(items[i], i));
     body.insertBefore(frag, sentinel);
     rendered = end;
     if (rendered >= items.length) {
@@ -791,9 +791,9 @@ async function showFile(path, line) {
   const previewBtn = el('button', 'seg', '预览');
   previewBtn.type = 'button';
   previewBtn.title = '在渲染视图与编辑视图之间切换';
-  previewBtn.addEventListener('click', () => {
-    state.previewMode = !state.previewMode;
-    if (state.previewMode) {
+  const setPreview = (on) => {
+    state.previewMode = on;
+    if (on) {
       article.replaceChildren(...renderPreviewNodes(currentEditor ? currentEditor.getValue() : data.content, path));
       article.hidden = false;
       host.hidden = true;
@@ -802,21 +802,17 @@ async function showFile(path, line) {
       article.hidden = true;
       host.hidden = false;
       previewBtn.textContent = '预览';
+      if (currentEditor) currentEditor.focus();
     }
-  });
+  };
+  previewBtn.addEventListener('click', () => setPreview(!state.previewMode));
   head.append(previewBtn);
 
   const exportBtn = el('button', 'seg', '导出 PDF');
   exportBtn.type = 'button';
   exportBtn.title = '切到渲染视图并调用浏览器打印（可选「另存为 PDF」）';
   exportBtn.addEventListener('click', () => {
-    if (!state.previewMode) {
-      state.previewMode = true;
-      article.replaceChildren(...renderPreviewNodes(currentEditor ? currentEditor.getValue() : data.content, path));
-      article.hidden = false;
-      host.hidden = true;
-      previewBtn.textContent = '编辑';
-    }
+    setPreview(true);
     window.print();
   });
   head.append(exportBtn);
@@ -942,6 +938,7 @@ async function showFile(path, line) {
     },
   });
   currentEditor.focus();
+  setPreview(!!state.previewMode);
   if (line) highlightLine(line);
   if (state.links) {
     mountBacklinks(wrap, path);
@@ -968,7 +965,7 @@ async function mountOutgoing(wrap, path) {
     for (const item of data.items) {
       const li = el('li');
       li.append(el('div', 'meta', `第 ${item.line} 行`));
-      const resolved = item.resolved ? item.resolved + '.md' : '未命中';
+      const resolved = item.resolved ? item.resolved : '未命中';
       li.append(el('div', 'snippet', `[[${item.target}]] → ${resolved}`));
       if (item.resolved) {
         li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.resolved + '.md')));
@@ -1263,7 +1260,7 @@ async function showTag(path) {
     const list = el('ul', 'results');
     for (const item of files.items) {
       const li = el('li');
-      li.append(el('div', 'meta', item.path));
+      li.append(el('div', 'meta', item.path.replace(/\\.md$/i, '')));
       li.append(el('div', 'snippet', item.snippet));
       li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.path)));
       list.append(li);

@@ -18,7 +18,7 @@ pub fn start(state: Arc<AppState>) {
         eprintln!("[watch] 没有运行时，跳过文件监听");
         return;
     };
-    let root = state.root.clone();
+    let root = state.notes_root.clone();
 
     std::thread::spawn(move || {
         let (tx, rx) = std::sync::mpsc::channel();

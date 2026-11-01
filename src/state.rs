@@ -12,8 +12,12 @@ use crate::git::Git;
 use crate::index::Index;
 
 pub struct AppState {
-    /// 规范化后的笔记根目录
+    /// 规范化后的项目根目录（`--dir` 指向它，git 仓库一般在这里）
     pub root: PathBuf,
+    /// Markdown 实际所在目录：`<root>/notes`（存在时），否则就是 root
+    pub notes_root: PathBuf,
+    /// 附件目录：`<root>/assets`（存在时），否则 notes_root/assets
+    pub assets_root: PathBuf,
     /// 本次进程的启动 token（不落盘，PRD 9.1）
     pub token: String,
     pub index: RwLock<Index>,
@@ -38,9 +42,22 @@ impl AppState {
         if !root.is_dir() {
             anyhow::bail!("笔记目录不是目录: {}", root.display());
         }
+        // 目录模型（v0.6）：MyNotes/{notes, assets}；兼容旧布局（md 直接在 root 下）
+        let notes_root = if root.join("notes").is_dir() {
+            root.join("notes")
+        } else {
+            root.clone()
+        };
+        let assets_root = if root.join("assets").is_dir() {
+            root.join("assets")
+        } else {
+            notes_root.join("assets")
+        };
         let git = Git::start(root.clone(), git_enabled);
         Ok(Arc::new(AppState {
             root,
+            notes_root,
+            assets_root,
             token: new_token(),
             index: RwLock::new(Index::default()),
             git,
@@ -52,7 +69,7 @@ impl AppState {
 
     /// 重建内存索引，返回扫描告警（非 UTF-8 文件、遍历失败等）。
     pub async fn rebuild_index(&self) -> anyhow::Result<Vec<String>> {
-        let index = Index::scan(&self.root)?;
+        let index = Index::scan(&self.notes_root)?;
         let warnings = index.warnings.clone();
         *self.index.write().await = index;
         Ok(warnings)
@@ -82,7 +99,7 @@ impl AppState {
                 _ => anyhow::bail!("路径越界"),
             }
         }
-        let joined = self.root.join(candidate);
+        let joined = self.notes_root.join(candidate);
         // 已存在则直接规范化；不存在则规范化其父目录，防软链接跳出
         let resolved = if joined.exists() {
             joined.canonicalize()?
@@ -96,15 +113,15 @@ impl AppState {
             parent.join(joined.file_name().context("路径缺少文件名")?)
         };
         let resolved = simplify(resolved);
-        if !resolved.starts_with(&self.root) {
+        if !resolved.starts_with(&self.notes_root) {
             anyhow::bail!("路径越界");
         }
         Ok(resolved)
     }
 
-    /// 相对路径（`/` 分隔）
+    /// 相对路径（相对 notes 根，`/` 分隔）
     pub fn relative(&self, abs: &Path) -> String {
-        abs.strip_prefix(&self.root)
+        abs.strip_prefix(&self.notes_root)
             .unwrap_or(abs)
             .components()
             .map(|c| c.as_os_str().to_string_lossy().to_string())

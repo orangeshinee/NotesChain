@@ -1016,3 +1016,14 @@ table.todos tr.sentinel td { height: 1px; padding: 0; border: none; }
 .outline-item.level-4 { padding-left: 42px; }
 .outline-item.level-5 { padding-left: 52px; }
 .outline-item.level-6 { padding-left: 62px; }
+
+/* 待办序号 */
+td .idx {
+  display: inline-block;
+  min-width: 18px;
+  margin-right: 6px;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
