@@ -269,10 +269,52 @@ pub fn collect_tags(content: &str) -> Vec<String> {
     out
 }
 
+/// 历史遗留的 `todo:` 写法（PRD 3.2.1）：只识别、不改写，供一次性迁移清单使用。
+/// 命中形如 `todo: xxx`、`- todo: xxx`、`* TODO：xxx`。
+pub fn find_legacy_todo(content: &str) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = content.lines().collect();
+    let flags = code_block_flags(&lines);
+    let mut out = Vec::new();
+    for (idx, line) in lines.iter().enumerate() {
+        if flags[idx] {
+            continue;
+        }
+        let mut rest = line.trim_start();
+        // 去掉列表符号
+        for bullet in ["- ", "* ", "+ "] {
+            if let Some(stripped) = rest.strip_prefix(bullet) {
+                rest = stripped.trim_start();
+                break;
+            }
+        }
+        let lower = rest.to_lowercase();
+        if lower.starts_with("todo:") || lower.starts_with("todo：") {
+            out.push((idx + 1, line.trim().to_string()));
+        }
+    }
+    out
+}
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn finds_legacy_todo_lines() {
+        let doc = "\
+- [ ] 正常待办
+todo: 没有列表符号的老写法
+- todo: 带列表符号
+* TODO：大写与全角冒号
+
+```
+todo: 代码块里的不算
+```
+";
+        let hits = find_legacy_todo(doc);
+        assert_eq!(hits.len(), 3);
+        assert_eq!(hits[0].0, 2);
+        assert!(hits[2].1.contains("TODO"));
+    }
     #[test]
     fn fence_flags() {
         let content = "- [ ] a\n```\n- [ ] b\n```\n- [ ] c\n";

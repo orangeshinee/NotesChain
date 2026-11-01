@@ -41,6 +41,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/git/show", get(git_show))
         .route("/api/git/restore", post(git_restore))
         .route("/api/backlinks", get(backlinks))
+        .route("/api/migration/todo", get(migration_todos))
         .route("/app.js", get(app_js))
         .route("/style.css", get(style_css))
         .route("/editor.js", get(editor_js))
@@ -281,6 +282,13 @@ async fn save_file(
         ));
     }
 
+    if q.force.unwrap_or(false) {
+        if let Some(parent) = abs.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
+            }
+        }
+    }
     let outgoing = if body.eol.as_deref() == Some("crlf") {
         body.content.replace('\n', "\r\n")
     } else {
@@ -774,6 +782,22 @@ fn wikilink_iter(line: &str) -> Vec<String> {
         rest = &after[end + 2..];
     }
     out
+}
+// ---------------------------------------------------------------- todo: 迁移清单
+
+async fn migration_todos(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let index = st.index.read().await;
+    let mut items = Vec::new();
+    for file in &index.files {
+        for (line, text) in crate::markdown::find_legacy_todo(&file.content) {
+            items.push(json!({
+                "path": file.path,
+                "line": line,
+                "text": text,
+            }));
+        }
+    }
+    Json(json!({ "total": items.len(), "items": items }))
 }
 // ---------------------------------------------------------------- 日程
 

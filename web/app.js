@@ -1043,6 +1043,7 @@ async function route() {
   }
   if (raw.startsWith('/search/')) return showSearch(decodeURIComponent(raw.slice(8)));
   if (raw.startsWith('/tag/')) return showTag(decodeURIComponent(raw.slice(5)));
+  if (raw.startsWith('/migration')) return showMigration();
   if (raw.startsWith('/history')) return showHistory();
   if (raw.startsWith('/commit/')) return showCommit(raw.slice(8));
   return showHome();
@@ -1115,6 +1116,38 @@ async function openLink(target) {
     } catch (e) {
       window.alert('新建失败：' + (e.message || e));
     }
+  }
+}
+// ---------------------------------------------------------------- todo: 迁移清单
+
+async function showMigration() {
+  state.activePath = null;
+  state.activeTag = null;
+  markActive();
+  main.replaceChildren(docHead('迁移清单', ''));
+  const wrap = el('div', 'wrap');
+  wrap.append(loadingState('扫描 todo: 写法…'));
+  main.append(wrap);
+  try {
+    const data = await api('/api/migration/todo');
+    if (!data.total) {
+      wrap.replaceChildren(el('div', 'empty-state', '没有发现 todo: 写法的历史待办。'));
+      return;
+    }
+    const tip = el('div', 'muted', '程序不会自动改写这些行。需要它们进入首页待办，请手工改成 - [ ] 语法。');
+    tip.style.padding = '0 0 12px';
+    const list = el('ul', 'results');
+    for (const item of data.items) {
+      const li = el('li');
+      li.append(el('div', 'meta', `${item.path}:${item.line}`));
+      li.append(el('div', 'snippet', item.text));
+      li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.path) + '@' + item.line));
+      list.append(li);
+    }
+    wrap.replaceChildren(tip, list);
+    main.replaceChildren(docHead('迁移清单', `${data.total} 条`, ''), wrap);
+  } catch (err) {
+    wrap.replaceChildren(errorState(err));
   }
 }
 // ---------------------------------------------------------------- 历史
@@ -1317,6 +1350,29 @@ document.addEventListener('click', (event) => {
 async function boot() {
   try {
     const cfg = await api('/api/config').catch(() => null);
+    const migration = await api('/api/migration/todo').catch(() => null);
+    if (migration && migration.total && localStorage.getItem('nc.migrationDismissed') !== '1') {
+      const note = el('div', 'notice');
+      note.append(el('span', '', `发现 ${migration.total} 条 todo: 写法的历史待办 `));
+      const link = el('a', '', '查看清单');
+      link.href = '#/migration';
+      link.style.color = 'inherit';
+      link.style.textDecoration = 'underline';
+      note.append(link);
+      note.append(document.createTextNode(' '));
+      const dismiss = el('button', 'seg tiny', '知道了');
+      dismiss.type = 'button';
+      dismiss.addEventListener('click', () => {
+        try {
+          localStorage.setItem('nc.migrationDismissed', '1');
+        } catch (err) {
+          /* ignore */
+        }
+        note.remove();
+      });
+      note.append(dismiss);
+      document.querySelector('.panels').prepend(note);
+    }
     // PRD 2.2 / 3.1：打开首页时当天文件不存在则自动新建
     await api('/api/daily', { method: 'POST' }).catch(() => null);
     if (cfg) {
