@@ -427,6 +427,10 @@ try {
   "---- 结果 ----"
   $results | ForEach-Object { $_ }
   $ws.Dispose()
+  if ($results -match '(?m)=> (no-|JS-ERROR)') {
+    Write-Host "存在失败场景（no-* / JS-ERROR）"
+    exit 1
+  }
 }
 finally {
   Get-Process -Id $proc.Id -ErrorAction SilentlyContinue | Stop-Process -Force

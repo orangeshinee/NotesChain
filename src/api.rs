@@ -304,9 +304,7 @@ async fn save_file(
     Query(q): Query<ForceQuery>,
     Json(body): Json<SaveRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    if !path.to_ascii_lowercase().ends_with(".md") {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "只支持保存 .md 文件"));
-    }
+    ensure_markdown(&path, "保存")?;
     let abs = st.resolve(&path).map_err(ApiError::bad_path)?;
     let rel = st.relative(&abs);
     let lock = st.lock_for(&rel).await;
@@ -329,15 +327,19 @@ async fn save_file(
             }
         }
     }
-    let outgoing = if body.eol.as_deref() == Some("crlf") {
+    let had_bom = current.starts_with('\u{feff}');
+    let mut outgoing = if body.eol.as_deref() == Some("crlf") {
         body.content.replace('\n', "\r\n")
     } else {
         body.content.clone()
     };
+    if had_bom && !outgoing.starts_with('\u{feff}') {
+        outgoing.insert(0, '\u{feff}');
+    }
     todo_write::atomic_write(&abs, &outgoing).map_err(ApiError::internal)?;
+    st.index.write().await.upsert(&st.notes_root, &rel).map_err(ApiError::internal)?;
     st.git.notify();
     st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    st.index.write().await.upsert(&st.notes_root, &rel).map_err(ApiError::internal)?;
 
     let mtime = mtime_ms(&abs);
     Ok(Json(json!({
@@ -514,9 +516,7 @@ async fn patch_todo(
     State(st): State<Arc<AppState>>,
     Json(body): Json<PatchTodoRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    if !body.path.to_ascii_lowercase().ends_with(".md") {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "只支持 .md 文件"));
-    }
+    ensure_markdown(&body.path, "修改")?;
     let abs = st.resolve(&body.path).map_err(ApiError::bad_path)?;
     let rel = st.relative(&abs);
     let lock = st.lock_for(&rel).await;
@@ -536,10 +536,11 @@ async fn patch_todo(
     // 按行切分并保留每行自己的行尾，避免混合 EOL 文件被整篇改写
     let mut segments: Vec<String> = content.split_inclusive('\n').map(|s| s.to_string()).collect();
     let ends_with_newline = content.ends_with('\n');
-    if segments.len() < located + 1 {
+
+    let Some(segment) = segments.get(located).cloned() else {
         return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "todo_relocate_failed", "行号越界"));
-    }
-    let segment = &segments[located];
+    };
+    let segment = &segment;
     let (body_text, terminator) = if let Some(stripped) = segment.strip_suffix("\r\n") {
         (stripped.to_string(), "\r\n")
     } else if let Some(stripped) = segment.strip_suffix('\n') {
@@ -584,6 +585,18 @@ struct NewNoteRequest {
     /// 日记日期 YYYY-MM-DD（默认今天）
     #[serde(default)]
     date: Option<String>,
+}
+
+/// 写接口统一校验：只接受 `.md`
+fn ensure_markdown(path: &str, action: &str) -> Result<(), ApiError> {
+    if !path.to_ascii_lowercase().ends_with(".md") {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            format!("只支持{action} .md 文件"),
+        ));
+    }
+    Ok(())
 }
 
 fn templates_dir(st: &AppState) -> PathBuf {
@@ -821,7 +834,7 @@ async fn append_todo(
         render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
     };
 
-    let (updated, line_no) = insert_into_section_any(&content, &["## 待办"], &format!("- [ ] {text}"));
+    let (updated, line_no) = insert_into_section(&content, "## 待办", &format!("- [ ] {text}"));
     if !exists {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).map_err(ApiError::internal)?;

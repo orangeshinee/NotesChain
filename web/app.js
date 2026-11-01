@@ -1644,10 +1644,11 @@ async function route() {
   // 切换页面前先把未保存的改动落盘（PRD 5.3：保存先于跳转）
   if (activeDirty && activeDirty() && activeFlush) {
     const flushFn = activeFlush;
-    activeFlush = null;
-    activeDirty = null;
     const ok = await flushFn();
     if (ok === false) return; // 有冲突/保存失败：留在当前页，别丢内容
+    // 只有确认保存成功才注销句柄；否则下次导航仍需要 flush 保护
+    activeFlush = null;
+    activeDirty = null;
   }
   const raw = location.hash.slice(1);
   if (raw.startsWith('/file/')) {

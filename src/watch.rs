@@ -36,6 +36,9 @@ pub fn start(state: Arc<AppState>) {
             return;
         }
 
+        // 与扫描共用同一套忽略规则（.gitignore / .git / .trash）
+        let ignored = crate::index::Ignored::load(&root);
+
         loop {
             let first = match rx.recv() {
                 Ok(Ok(event)) => event,
@@ -59,36 +62,45 @@ pub fn start(state: Arc<AppState>) {
 
             let mut changed = false;
             for path in paths {
-                if !path.starts_with(&root) || !path.is_file() {
+                if !path.starts_with(&root) {
                     continue;
                 }
                 let rel = path
                     .strip_prefix(&root)
                     .map(|p| p.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_default();
-                if !rel.ends_with(".md") || rel.split('/').any(|seg| seg == ".git") {
+                if rel.is_empty() || !rel.ends_with(".md") {
+                    continue;
+                }
+                if rel.split('/').any(|seg| seg == ".git" || seg == ".trash") || ignored.is_ignored(&rel)
+                {
                     continue;
                 }
                 let applied = handle.block_on(async {
                     let mut index = state.index.write().await;
-                    let before = index
-                        .files
-                        .iter()
-                        .find(|f| f.path == rel)
-                        .map(|f| f.version.clone());
-                    match index.upsert(&root, &rel) {
-                        Ok(()) => {
-                            let after = index
-                                .files
-                                .iter()
-                                .find(|f| f.path == rel)
-                                .map(|f| f.version.clone());
-                            before != after
+                    if path.is_file() {
+                        let before = index
+                            .files
+                            .iter()
+                            .find(|f| f.path == rel)
+                            .map(|f| f.version.clone());
+                        match index.upsert(&root, &rel) {
+                            Ok(()) => {
+                                let after = index
+                                    .files
+                                    .iter()
+                                    .find(|f| f.path == rel)
+                                    .map(|f| f.version.clone());
+                                before != after
+                            }
+                            Err(err) => {
+                                eprintln!("[watch] 更新 {rel} 失败: {err}");
+                                false
+                            }
                         }
-                        Err(err) => {
-                            eprintln!("[watch] 更新 {rel} 失败: {err}");
-                            false
-                        }
+                    } else {
+                        // 外部删除 / 重命名：移除索引里的旧条目
+                        index.remove(&rel)
                     }
                 });
                 changed |= applied;

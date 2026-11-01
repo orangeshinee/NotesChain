@@ -42,7 +42,17 @@ $js = @'
 })()
 '@
 
-& playwright-cli -s=$Session open $Url | Out-Null
+$nav = $Url
+if ($nav -notmatch 'e2e=1') {
+  $i = $nav.IndexOf('#')
+  if ($i -ge 0) { $nav = $nav.Substring(0, $i) + '&e2e=1' + $nav.Substring($i) } else { $nav = $nav + '&e2e=1' }
+}
+
+& playwright-cli -s=$Session open $nav | Out-Null
+Start-Sleep -Seconds 2
+# 打开测试开关（token 引导会清掉 query，所以用 localStorage），再重载
+& playwright-cli -s=$Session eval "localStorage.setItem('nc.e2e','1')" | Out-Null
+& playwright-cli -s=$Session reload | Out-Null
 Start-Sleep -Seconds 2
 $raw = & playwright-cli -s=$Session eval $js
 & playwright-cli -s=$Session close | Out-Null

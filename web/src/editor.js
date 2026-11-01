@@ -249,19 +249,17 @@ async function toggleTask(view, pos) {
 
   const rawLine = `${match[1]}- [${match[2]}] ${rest}`.trimEnd();
   const nextText = done ? `${match[1]}- [ ] ${rest}` : `${match[1]}- [x] ${rest} ✅ ${nowStamp()}`;
-  const before = line.text;
-
-  view.dispatch({ changes: { from: line.from, to: line.to, insert: nextText } });
-
+  // 有后端回调时不要先改本地文档：否则回调里的「先落盘正文」会把已勾选的内容写进磁盘，
+  // 随后 PATCH 又按旧 raw_line 再切一次。交给回调完成后用服务端返回内容刷新（见 app.js）。
   if (view.__ncOnToggle) {
     try {
       await view.__ncOnToggle({ line: line.number, rawLine, done: !done });
     } catch (err) {
-      // 失败回滚
-      const cur = view.state.doc.line(line.number);
-      view.dispatch({ changes: { from: cur.from, to: cur.to, insert: before } });
+      /* 服务端失败时文档未被改动，无需回滚 */
     }
+    return;
   }
+  view.dispatch({ changes: { from: line.from, to: line.to, insert: nextText } });
 }
 
 function activeLineNumbers(state) {
@@ -530,9 +528,15 @@ export function create(opts) {
   });
 
 
-  // 调试/自动化句柄：浏览器探针用它驱动输入（不影响正常使用）
+  // 仅当 URL 带 ?e2e=1 时暴露调试句柄（自动化测试用），正常使用不泄漏全局
   try {
-    window.__ncView = view;
+    let e2e = false;
+    try {
+      e2e = localStorage.getItem('nc.e2e') === '1' || new URLSearchParams(location.search).has('e2e');
+    } catch (err) {
+      e2e = false;
+    }
+    if (e2e) window.__ncView = view;
   } catch (err) {
     /* ignore */
   }

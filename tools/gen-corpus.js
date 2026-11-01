@@ -12,8 +12,23 @@ if (!root) {
 const pad = (n) => String(n).padStart(2, '0');
 const sizeOf = (lines) => Buffer.byteLength(lines.join('\n'), 'utf8');
 
+// 安全护栏：拒绝在「非空且没有语料标记」的目录上执行（防止误删真实笔记目录）
+const MARKER = '.noteschain-corpus';
+function assertSafeTarget(dir) {
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir);
+  if (entries.length > 0 && !entries.includes(MARKER)) {
+    console.error(
+      `拒绝执行：${dir} 非空且缺少 ${MARKER} 标记。\n` +
+        '若确认这是测试目录，请先手动清空或放入该标记文件；本脚本绝不覆盖来路不明的目录。'
+    );
+    process.exit(2);
+  }
+}
+assertSafeTarget(root);
 fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(root, { recursive: true });
+fs.writeFileSync(path.join(root, MARKER), 'generated ' + new Date().toISOString() + '\n');
 
 const start = new Date(2025, 0, 1);
 const TARGET = 20000; // 每个文件约 20 KB（字节），1000 个 ≈ 20 MB

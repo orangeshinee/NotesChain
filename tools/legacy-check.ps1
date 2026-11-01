@@ -8,7 +8,10 @@ $exe = Join-Path $repo "target\release\noteschain.exe"
 if (-not (Test-Path $exe)) { throw "先运行 cargo build --release" }
 
 $notes = Join-Path $repo ".demo\legacy-notes"
+# 本脚本独占的临时目录：先清空再生成（生成器只接受空目录或有标记的目录）
+if (Test-Path $notes) { Remove-Item $notes -Recurse -Force }
 & node (Join-Path $PSScriptRoot "legacy-corpus.js") $notes | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "语料生成失败（exit=$LASTEXITCODE）" }
 
 # 记录所有既有文件的内容哈希，结束后比对「一个字都没改」
 $before = @{}

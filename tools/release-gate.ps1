@@ -21,14 +21,16 @@ Record "cargo build --release" ($buildCode -eq 0 -and (Test-Path $exe)) "exit=$b
 
 "=== 1. 单元测试 ==="
 $testOut = (& cargo test 2>&1) -join "`n"
+$testCode = $LASTEXITCODE
 $testLine = [regex]::Match($testOut, 'test result: (\w+)\. (\d+) passed; (\d+) failed')
-Record "cargo test" ($testLine.Success -and $testLine.Groups[1].Value -eq 'ok') $(if ($testLine.Success) { "$($testLine.Groups[2].Value) passed" } else { '解析失败' })
+Record "cargo test" ($testCode -eq 0 -and $testLine.Success -and $testLine.Groups[1].Value -eq 'ok' -and $testLine.Groups[3].Value -eq '0') $(if ($testLine.Success) { "exit=$testCode $($testLine.Groups[2].Value) passed" } else { "exit=$testCode 解析失败" })
 
 "=== 2. clippy ==="
 $clippyOut = (& cargo clippy --all-targets 2>&1) -join "`n"
+$clippyCode = $LASTEXITCODE
 $warnCount = ([regex]::Matches($clippyOut, '(?m)^warning: ')).Count
 $errCount = ([regex]::Matches($clippyOut, '(?m)^error')).Count
-Record "cargo clippy" ($warnCount -eq 0 -and $errCount -eq 0) "warnings=$warnCount errors=$errCount"
+Record "cargo clippy" ($clippyCode -eq 0 -and $warnCount -eq 0 -and $errCount -eq 0) "exit=$clippyCode warnings=$warnCount errors=$errCount"
 
 "=== 3. 接口冒烟 ==="
 & pwsh -NoProfile -File (Join-Path $PSScriptRoot "smoke.ps1") *> $null

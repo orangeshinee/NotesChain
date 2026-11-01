@@ -110,6 +110,13 @@ impl Index {
 
     /// 全部待办（含已完成），按 PRD 4.1 的排序规则：
     /// 日记按日期倒序在前，其余按路径字典序、行号升序在后。
+    /// 从索引移除一个文件（外部删除/重命名时用），返回是否有变化
+    pub fn remove(&mut self, path: &str) -> bool {
+        let before = self.files.len();
+        self.files.retain(|f| f.path != path);
+        self.files.len() != before
+    }
+
     pub fn all_todos(&self) -> Vec<TodoRow> {
         let mut rows: Vec<TodoRow> = Vec::new();
         for file in &self.files {

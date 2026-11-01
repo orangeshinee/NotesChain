@@ -259,7 +259,19 @@ fs.mkdirSync(root, { recursive: true });
 | M5 | ✅ | 路径解析向上找最近已存在祖先做 canonicalize，再拼回剩余层级 |
 | M7 | ✅ | `git commit` 带 pathspec（仅限笔记目录），不再连带父仓库已暂存内容 |
 | L2 | ✅ | 日程段标题优先写 `## 日程`，老文件 `## 今日日程` 也能识别并复用 |
+| H4 | ✅ | 追加保留原 BOM：save_file 检测原文件有 BOM 时写回时补回 |
+| H5 | ✅ | 监听与扫描共用 Ignored：跳过 `.git`/`.trash`/`.gitignore` 命中项 |
+| H6 | ✅ | 监听收到删除/重命名时从索引移除（Index::remove）；增量也应用 .gitignore |
+| H8 | ✅ | `gen-corpus.js`/`legacy-corpus.js` 增加护栏：目标目录非空且无 `.noteschain-corpus` 标记则拒绝执行（exit 2） |
+| H9 | ✅ | gate 的 test/clippy 改按 `$LASTEXITCODE` 判定；browser-probe 有 `no-*`/`JS-ERROR` 时 exit 1 |
+| H2 | ✅ | route 只在 flush 成功后才注销 activeFlush/activeDirty，冲突后再次导航仍受保护 |
+| H3 | ✅ | 根因在 `toggleTask` 先 dispatch 再回调：改为有回调时不改本地文档，等 PATCH+刷新；Playwright 实测 0→1→0 |
 | 其余 M4/M8~M11、L1/L3/L4 | ⬜ | 未处理（体验类/低风险），留待后续 |
+
+### 两轴评审（code-review skill，2026-11-01 晚）
+
+- Standards：需返工的硬性问题（提交信息格式、写序、重复的 `.md` 校验）已处理：写序改为 upsert 先于 notify/revision，`.md` 校验抽成 `ensure_markdown`。提交信息格式为历史提交，后续遵守。
+- Spec：指出 H5/H6/H8/H9 半做或缺失 → 已按上表补齐。
 
 ### 复审跟进（同日）
 
