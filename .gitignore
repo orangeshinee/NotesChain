@@ -11,3 +11,7 @@ skillhub.install.md
 
 # Playwright CLI 测试产物
 .playwright-cli/
+
+# 本地凭据缓存（误建在工作区时也不该进仓库）
+.git.git-credentials
+.git-credentials
