@@ -857,6 +857,47 @@ searchInput.addEventListener('input', () => {
 
 window.addEventListener('hashchange', route);
 
+// ---------------------------------------------------------------- 外部改动轮询
+
+let lastRevision = null;
+
+async function pollRevision() {
+  try {
+    const data = await api('/api/revision');
+    if (lastRevision === null) {
+      lastRevision = data.revision;
+    } else if (data.revision !== lastRevision) {
+      lastRevision = data.revision;
+      await refreshFromDisk();
+    }
+  } catch (err) {
+    /* 服务重启或网络抖动：下一轮再试 */
+  }
+  setTimeout(pollRevision, 5000);
+}
+
+async function refreshFromDisk() {
+  try {
+    await loadSidebar();
+  } catch (err) {
+    /* 侧边栏刷新失败不影响主区域 */
+  }
+  if (!state.activePath) {
+    await showHome();
+    return;
+  }
+  // 编辑中不覆盖用户内容；未编辑则只在磁盘版本真的变了时重载
+  if (activeDirty && activeDirty()) return;
+  try {
+    const fresh = await api('/api/files/' + encodeURI(state.activePath));
+    const current = currentEditor ? currentEditor.getValue() : null;
+    if (current !== null && current === fresh.content) return;
+    await showFile(state.activePath);
+  } catch (err) {
+    /* 文件可能被删了，交给下一次导航处理 */
+  }
+}
+
 async function boot() {
   try {
     await loadSidebar();
@@ -865,6 +906,7 @@ async function boot() {
     fileTree.append(el('div', 'notice', String(err.message || err)));
   }
   route();
+  pollRevision();
 }
 
 boot();

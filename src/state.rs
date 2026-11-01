@@ -19,6 +19,8 @@ pub struct AppState {
     pub index: RwLock<Index>,
     /// Git 自动提交调度
     pub git: Arc<Git>,
+    /// 索引修订号：外部改动后自增，前端轮询它决定是否刷新
+    pub revision: std::sync::atomic::AtomicU64,
     /// 按文件串行化写入（PRD 5.3 第 7 条）
     file_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
@@ -40,6 +42,7 @@ impl AppState {
             token: new_token(),
             index: RwLock::new(Index::default()),
             git,
+            revision: std::sync::atomic::AtomicU64::new(0),
             file_locks: Mutex::new(HashMap::new()),
         }))
     }

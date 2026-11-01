@@ -8,6 +8,7 @@ mod index;
 mod markdown;
 mod schedule;
 mod state;
+mod watch;
 mod todo_write;
 
 use std::net::SocketAddr;
@@ -33,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
     let state = state::AppState::new(args.dir)?;
 
     let warnings = state.rebuild_index().await?;
+    watch::start(state.clone());
     for warning in &warnings {
         eprintln!("[warn] {warning}");
     }

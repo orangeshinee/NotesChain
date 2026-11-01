@@ -30,6 +30,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/tags", get(list_tags))
         .route("/api/search", get(search))
         .route("/api/schedule", get(schedule_view))
+        .route("/api/revision", get(revision))
         .route("/api/daily", post(ensure_daily))
         .route("/api/index/rebuild", post(rebuild_index))
         .route("/api/git/status", get(git_status))
@@ -250,6 +251,7 @@ async fn save_file(
 
     todo_write::atomic_write(&abs, &body.content).map_err(ApiError::internal)?;
     st.git.notify();
+    st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
 
     let mtime = mtime_ms(&abs);
@@ -261,6 +263,9 @@ async fn save_file(
 
 // ---------------------------------------------------------------- 待办
 
+async fn revision(State(st): State<Arc<AppState>>) -> Json<Value> {
+    Json(json!({ "revision": st.revision.load(std::sync::atomic::Ordering::SeqCst) }))
+}
 async fn list_todos(State(st): State<Arc<AppState>>) -> Json<Value> {
     let index = st.index.read().await;
     let rows = index.open_todos();
@@ -309,6 +314,7 @@ async fn patch_todo(
 
     todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
     st.git.notify();
+    st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
 
     let mtime = mtime_ms(&abs);
@@ -346,6 +352,7 @@ async fn ensure_daily(State(st): State<Arc<AppState>>) -> Result<Json<Value>, Ap
     }
     todo_write::atomic_write(&abs, &content).map_err(ApiError::internal)?;
     st.git.notify();
+    st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
 
     Ok(Json(json!({
