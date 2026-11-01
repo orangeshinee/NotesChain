@@ -71,6 +71,28 @@ impl Index {
     }
 
 
+    /// `raw/` 下同名的裸名冲突（PRD 3.5.4）：返回 (裸名, 冲突文件路径列表)
+    pub fn duplicate_raw_names(&self) -> Vec<(String, Vec<String>)> {
+        use std::collections::BTreeMap;
+        let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for file in &self.files {
+            if !file.path.starts_with("raw/") || !file.path.ends_with(".md") {
+                continue;
+            }
+            let stem = file
+                .path
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .trim_end_matches(".md")
+                .to_string();
+            groups.entry(stem).or_default().push(file.path.clone());
+        }
+        groups
+            .into_iter()
+            .filter(|(_, paths)| paths.len() > 1)
+            .collect()
+    }
     pub fn upsert(&mut self, root: &Path, path: &str) -> anyhow::Result<()> {
         let abs = root.join(path);
         if !abs.exists() {

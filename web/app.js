@@ -9,6 +9,7 @@ const state = {
   scheduleRange: 'week',
   links: false,
   todoLimit: 1000,
+  duplicateNames: [],
   leafEls: new Map(),
 };
 
@@ -977,6 +978,10 @@ function openHref(href) {
 async function openLink(target) {
   const clean = String(target || '').trim();
   if (!clean) return;
+  if (!clean.includes('/') && state.duplicateNames.some((d) => d.name === clean)) {
+    window.alert(`「${clean}」在 raw/ 下有多份同名笔记，请改用路径形式，如 [[raw/子目录/${clean}]]`);
+    return;
+  }
   const path = clean.includes('/')
     ? (/\.md$/.test(clean) ? clean : clean + '.md')
     : 'raw/' + clean + '.md';
@@ -1133,7 +1138,18 @@ if (refreshBtn) {
 async function boot() {
   try {
     const cfg = await api('/api/config').catch(() => null);
-    if (cfg) state.links = !!cfg.links;
+    if (cfg) {
+      state.links = !!cfg.links;
+      state.duplicateNames = cfg.duplicateNames || [];
+      if (state.duplicateNames.length) {
+        const names = state.duplicateNames.map((d) => d.name).join('、');
+        const note = el('div', 'notice', `raw/ 下有同名笔记，裸名暂不解析：${names}`);
+        note.title = state.duplicateNames
+          .map((d) => `${d.name}: ${d.paths.join(' / ')}`)
+          .join('\n');
+        document.querySelector('.panels').prepend(note);
+      }
+    }
     await loadSidebar();
     setGit(await api('/api/git/status').catch(() => null));
   } catch (err) {

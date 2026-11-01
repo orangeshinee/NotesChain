@@ -271,7 +271,15 @@ async fn save_file(
 // ---------------------------------------------------------------- 待办
 
 async fn config(State(st): State<Arc<AppState>>) -> Json<Value> {
-    Json(json!({ "links": st.links }))
+    let conflicts: Vec<Value> = {
+        let index = st.index.read().await;
+        index
+            .duplicate_raw_names()
+            .into_iter()
+            .map(|(name, paths)| json!({ "name": name, "paths": paths }))
+            .collect()
+    };
+    Json(json!({ "links": st.links, "duplicateNames": conflicts }))
 }
 async fn revision(State(st): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({ "revision": st.revision.load(std::sync::atomic::Ordering::SeqCst) }))
@@ -600,11 +608,14 @@ struct BacklinksParams {
 }
 
 /// `[[目标]]` 的解析（PRD 3.5.2）：含 `/` 以 notes 根为基准；不含 `/` 只在 raw/ 下按裸名找。
-fn resolve_wikilink(target: &str, from_dir: &str) -> String {
+fn resolve_wikilink(target: &str, from_dir: &str, ambiguous: &std::collections::BTreeSet<String>) -> String {
     let clean = target.trim();
     let clean = clean.strip_suffix(".md").unwrap_or(clean);
     if clean.contains('/') {
         normalize_rel(clean)
+    } else if ambiguous.contains(clean) {
+        // 同名裸名冲突期间不解析（PRD 3.5.4）
+        String::new()
     } else {
         let base = format!("raw/{clean}");
         let _ = from_dir;
@@ -632,6 +643,11 @@ async fn backlinks(
 ) -> Json<Value> {
     let target = normalize_rel(p.path.trim().trim_end_matches(".md"));
     let index = st.index.read().await;
+    let ambiguous: std::collections::BTreeSet<String> = index
+        .duplicate_raw_names()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
     let mut items = Vec::new();
 
     for file in &index.files {
@@ -643,7 +659,7 @@ async fn backlinks(
                 continue;
             }
             for cap in wikilink_iter(line) {
-                if resolve_wikilink(&cap, dir) == target {
+                if resolve_wikilink(&cap, dir, &ambiguous) == target && !target.is_empty() {
                     items.push(json!({
                         "path": file.path,
                         "line": idx + 1,
