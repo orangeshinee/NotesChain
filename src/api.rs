@@ -55,7 +55,7 @@ fn diary_date_from_path(rel: &str) -> Option<String> {
 pub fn router(state: Arc<AppState>) -> Router {
     let protected = Router::new()
         .route("/api/files", get(list_files))
-        .route("/api/files/*path", get(read_file).put(save_file))
+        .route("/api/files/*path", get(read_file).put(save_file).delete(delete_file))
         .route("/api/todos", get(list_todos).patch(patch_todo))
         .route("/api/todos/append", post(append_todo))
         .route("/api/notes/new", post(create_note))
@@ -343,6 +343,45 @@ async fn save_file(
     })))
 }
 
+
+/// 删除笔记：不硬删，移到项目根 `.trash/` 下（可恢复）
+async fn delete_file(
+    State(st): State<Arc<AppState>>,
+    AxumPath(path): AxumPath<String>,
+) -> Result<Json<Value>, ApiError> {
+    let abs = st.resolve(&path).map_err(ApiError::bad_path)?;
+    if !abs.is_file() {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "文件不存在"));
+    }
+    if !path.to_ascii_lowercase().ends_with(".md") {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "只支持删除 .md"));
+    }
+    let rel = st.relative(&abs);
+    let lock = st.lock_for(&rel).await;
+    let _guard = lock.lock().await;
+
+    let trash = st.root.join(".trash");
+    std::fs::create_dir_all(&trash).map_err(ApiError::internal)?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let name = abs
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "note.md".to_string());
+    let target = trash.join(format!("{stamp}-{name}"));
+    std::fs::rename(&abs, &target).map_err(ApiError::internal)?;
+
+    {
+        let mut index = st.index.write().await;
+        index.files.retain(|f| f.path != rel);
+    }
+    st.git.notify();
+    st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    Ok(Json(json!({
+        "path": rel,
+        "trashedTo": target.display().to_string(),
+    })))
+}
 // ---------------------------------------------------------------- 待办
 
 async fn config(State(st): State<Arc<AppState>>) -> Json<Value> {

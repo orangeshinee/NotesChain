@@ -1114,3 +1114,9 @@ body.wide .wrap { max-width: none; }
 .form-row > span { width: 44px; color: var(--muted); font-size: 12.5px; }
 .form-row .todo-filter, .form-row .quick-add { flex: 1; width: auto; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+/* 文件树：叶子横向排列，计数右对齐 */
+.tree .leaf { display: flex; align-items: center; gap: 6px; }
+.tree .leaf .n { margin-left: auto; }
+button.seg.danger { color: #b42318; }
+button.seg.danger:hover { border-color: #b42318; }

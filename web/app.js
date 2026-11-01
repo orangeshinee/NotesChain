@@ -338,6 +338,34 @@ function stopScheduleTicker() {
     state.scheduleTimer = null;
   }
 }
+async function refreshTodoSection() {
+  const section = document.querySelector('.todos-section');
+  if (!section) {
+    showHome();
+    return;
+  }
+  const scroll = main.scrollTop;
+  const query =
+    '/api/todos?status=' + state.todoStatus + '&limit=' + state.todoLimit +
+    (state.todoTag ? '&tag=' + encodeURIComponent(state.todoTag) : '');
+  try {
+    const data = await api(query);
+    if (state.todoSort === 'priority') {
+      const rank = (item) => (typeof item.priority === 'number' ? item.priority : 99);
+      data.items = data.items
+        .slice()
+        .sort((a, b) => rank(a) - rank(b) || String(a.path).localeCompare(String(b.path)) || a.line - b.line);
+    }
+    const fresh = buildTodoSection(data, () => {
+      state.todoLimit = 50000;
+      showHome();
+    });
+    section.replaceWith(fresh);
+    main.scrollTop = scroll;
+  } catch (err) {
+    /* 保持原样 */
+  }
+}
 async function showHome() {
   const keepScroll = main.scrollTop;
   state.activePath = null;
@@ -560,7 +588,7 @@ function buildTodoSection(todos, onShowAll) {
   filter.value = state.todoTag || '';
   filter.addEventListener('change', () => {
     state.todoTag = filter.value;
-    showHome();
+    refreshTodoSection();
   });
   head.append(filter);
 
@@ -573,7 +601,7 @@ function buildTodoSection(todos, onShowAll) {
   sortSel.value = state.todoSort || 'default';
   sortSel.addEventListener('change', () => {
     state.todoSort = sortSel.value;
-    showHome();
+    refreshTodoSection();
   });
   head.append(sortSel);
 
@@ -583,7 +611,7 @@ function buildTodoSection(todos, onShowAll) {
     btn.type = 'button';
     btn.addEventListener('click', () => {
       state.todoStatus = value;
-      showHome();
+      refreshTodoSection();
     });
     toggle.append(btn);
   }
@@ -754,7 +782,7 @@ function buildTodoTable(items) {
     if (todo.done_at) tdText.append(el('span', 'done-at', '✅ ' + todo.done_at));
 
     const tdFile = el('td');
-    const file = el('span', 'file', todo.path.split('/').pop().replace(/\\.md$/i, ''));
+    const file = el('span', 'file', todo.path.split('/').pop().replace(/\.md$/i, ''));
     file.title = todo.path + ':' + todo.line;
     file.addEventListener('click', () => go('/file/' + encodeURIComponent(todo.path)));
     tdFile.append(file);
@@ -907,6 +935,23 @@ async function showFile(path, line) {
     setTimeout(() => window.print(), 300);
   });
   head.append(exportBtn);
+
+  const deleteBtn = el('button', 'seg danger', '删除');
+  deleteBtn.type = 'button';
+  deleteBtn.title = '移到项目根 .trash/（可恢复）';
+  deleteBtn.addEventListener('click', async () => {
+    if (!window.confirm(`删除「${path}」？会移到 .trash/，可手动恢复。`)) return;
+    deleteBtn.disabled = true;
+    try {
+      await api('/api/files/' + encodeURI(path), { method: 'DELETE' });
+      await loadSidebar();
+      go('/');
+    } catch (err) {
+      deleteBtn.disabled = false;
+      window.alert('删除失败：' + (err.message || err));
+    }
+  });
+  head.append(deleteBtn);
 
   main.replaceChildren(head, layout);
   renderOutline(outline, data.content);
@@ -1427,14 +1472,13 @@ function renderFileTree(data) {
   if (notes && notes.entries.length) {
     const box = el('details');
     const sum = el('summary');
-    sum.append(el('span', '', 'raw / 其他'));
+    sum.append(el('span', '', '主题笔记'));
     sum.append(el('span', 'n', String(notes.entries.length)));
     box.append(sum);
     for (const entry of notes.entries) {
-      box.append(fileLeaf(entry.path, entry.path.replace(/\.md$/, ''), entry.todos));
+      box.append(fileLeaf(entry.path, entry.path.split('/').pop().replace(/\.md$/, ''), entry.todos));
       total++;
     }
-    box.open = true;
     fileTree.append(box);
   }
 
