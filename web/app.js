@@ -1886,24 +1886,109 @@ if (wideBtn) {
   });
 }
 
-const newNoteBtn = document.getElementById('new-note');
-if (newNoteBtn) {
-  newNoteBtn.addEventListener('click', async () => {
-    const title = window.prompt('新建笔记标题（会建在 raw/ 下，自带 frontmatter）');
-    if (!title || !title.trim()) return;
+async function openNewNoteDialog() {
+  let templates = [];
+  try {
+    const data = await api('/api/templates');
+    templates = data.templates || [];
+  } catch (err) {
+    templates = [];
+  }
+
+  const mask = el('div', 'modal-mask');
+  const box = el('div', 'modal new-note-modal');
+  box.append(el('h2', '', '新建笔记'));
+
+  const typeRow = el('label', 'form-row');
+  typeRow.append(el('span', '', '类型'));
+  const typeSel = el('select', 'todo-filter');
+  const kinds = [['diary', '日记'], ['note', '普通笔记']].concat(
+    templates.map((name) => ['tpl:' + name, '模板：' + name])
+  );
+  for (const [value, label] of kinds) {
+    const opt = el('option', '', label);
+    opt.value = value;
+    typeSel.append(opt);
+  }
+  typeRow.append(typeSel);
+
+  const titleRow = el('label', 'form-row');
+  titleRow.append(el('span', '', '标题'));
+  const titleInput = el('input', 'quick-add');
+  titleInput.placeholder = '新笔记标题';
+  titleRow.append(titleInput);
+
+  const dateRow = el('label', 'form-row');
+  dateRow.append(el('span', '', '日期'));
+  const dateInput = document.createElement('input');
+  dateInput.type = 'date';
+  const now = new Date();
+  dateInput.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  dateInput.className = 'quick-add';
+  dateRow.append(dateInput);
+
+  const syncRows = () => {
+    const isDiary = typeSel.value === 'diary';
+    dateRow.hidden = !isDiary;
+    titleRow.hidden = isDiary;
+  };
+  typeSel.addEventListener('change', syncRows);
+
+  const actions = el('div', 'modal-actions');
+  const cancel = el('button', 'seg', '取消');
+  cancel.type = 'button';
+  cancel.addEventListener('click', () => mask.remove());
+  const ok = el('button', 'seg active', '创建');
+  ok.type = 'button';
+  ok.addEventListener('click', async () => {
+    const value = typeSel.value;
+    const payload = {};
+    if (value.startsWith('tpl:')) {
+      payload.template = value.slice(4);
+      payload.type = 'note';
+      if (!titleInput.value.trim()) {
+        window.alert('请填写标题');
+        return;
+      }
+      payload.title = titleInput.value.trim();
+    } else if (value === 'diary') {
+      payload.type = 'diary';
+      payload.date = dateInput.value || undefined;
+    } else {
+      payload.type = 'note';
+      if (!titleInput.value.trim()) {
+        window.alert('请填写标题');
+        return;
+      }
+      payload.title = titleInput.value.trim();
+    }
     try {
       const res = await api('/api/notes/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim() }),
+        body: JSON.stringify(payload),
       });
+      mask.remove();
       await loadSidebar();
       go('/file/' + encodeURIComponent(res.path));
     } catch (err) {
       window.alert('新建失败：' + (err.message || err));
     }
   });
+  actions.append(cancel, ok);
+
+  box.append(typeRow, titleRow, dateRow, actions);
+  mask.append(box);
+  mask.addEventListener('click', (event) => {
+    if (event.target === mask) mask.remove();
+  });
+  document.body.append(mask);
+  syncRows();
+  titleInput.focus();
 }
+
+const newNoteBtn = document.getElementById('new-note');
+if (newNoteBtn) newNoteBtn.addEventListener('click', openNewNoteDialog);
 
 const refreshBtn = document.getElementById('refresh');
 if (refreshBtn) {

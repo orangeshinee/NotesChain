@@ -31,6 +31,10 @@ fn render_template(tpl: &str, title: &str, date: &str, datetime: &str) -> String
         .replace("{{DATETIME}}", datetime)
 }
 
+fn render_template_full(tpl: &str, title: &str, date: &str, datetime: &str) -> String {
+    render_template(tpl, title, date, datetime).replace("{{TAGS}}", "[]")
+}
+
 /// 路径形如 `YYYY/MM/YYYY-MM-DD.md` 视为日记
 fn diary_date_from_path(rel: &str) -> Option<String> {
     let parts: Vec<&str> = rel.trim_end_matches(".md").split('/').collect();
@@ -55,6 +59,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/todos", get(list_todos).patch(patch_todo))
         .route("/api/todos/append", post(append_todo))
         .route("/api/notes/new", post(create_note))
+        .route("/api/templates", get(list_templates))
         .route("/api/schedule/append", post(append_schedule))
         .route("/api/tags", get(list_tags))
         .route("/api/search", get(search))
@@ -521,6 +526,36 @@ struct NewNoteRequest {
     /// note / diary；不传时按路径判断
     #[serde(default)]
     r#type: Option<String>,
+    /// templates/ 下的模板名（不含 .md）
+    #[serde(default)]
+    template: Option<String>,
+    /// 日记日期 YYYY-MM-DD（默认今天）
+    #[serde(default)]
+    date: Option<String>,
+}
+
+fn templates_dir(st: &AppState) -> PathBuf {
+    st.root.join("templates")
+}
+
+async fn list_templates(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let dir = templates_dir(&st);
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    names.push(stem.to_string());
+                }
+            }
+        }
+    }
+    names.sort();
+    Json(json!({
+        "dir": dir.display().to_string(),
+        "templates": names,
+    }))
 }
 
 fn sanitize_title(raw: &str) -> String {
@@ -548,13 +583,24 @@ async fn create_note(
     let today = now.format("%Y-%m-%d").to_string();
 
     let title = body.title.as_deref().map(sanitize_title).unwrap_or_default();
+    let date = body
+        .date
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| crate::index::is_iso_date(d))
+        .map(str::to_string)
+        .unwrap_or_else(|| today.clone());
+    let is_diary_request = body.r#type.as_deref() == Some("diary") || body.date.is_some();
     let rel = match body.path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => p.to_string(),
         None => {
-            if title.is_empty() {
+            if is_diary_request {
+                format!("{}/{}/{}.md", &date[..4], &date[5..7], date)
+            } else if title.is_empty() {
                 return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "缺少标题"));
+            } else {
+                format!("raw/{title}.md")
             }
-            format!("raw/{title}.md")
         }
     };
     if !rel.ends_with(".md") {
@@ -566,13 +612,25 @@ async fn create_note(
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "同名文件已存在"));
     }
 
-    let is_diary = body.r#type.as_deref() == Some("diary") || diary_date_from_path(&rel).is_some();
-    let content = if is_diary {
-        let date = diary_date_from_path(&rel).unwrap_or_else(|| today.clone());
-        render_template(DAILY_TEMPLATE, &date, &date, &datetime)
+    let is_diary = body.r#type.as_deref() == Some("diary")
+        || body.date.is_some()
+        || diary_date_from_path(&rel).is_some();
+    let doc_date = diary_date_from_path(&rel).unwrap_or_else(|| date.clone());
+    let name = if is_diary {
+        doc_date.clone()
     } else {
-        let name = title_or_stem(&title, &rel);
-        render_template(NOTE_TEMPLATE, &name, &today, &datetime)
+        title_or_stem(&title, &rel)
+    };
+
+    // 优先用 templates/<name>.md，其次内置模板
+    let custom = body
+        .template
+        .as_deref()
+        .and_then(|n| std::fs::read_to_string(templates_dir(&st).join(format!("{n}.md"))).ok());
+    let content = match custom {
+        Some(tpl) => render_template_full(&tpl, &name, &doc_date, &datetime),
+        None if is_diary => render_template(DAILY_TEMPLATE, &doc_date, &doc_date, &datetime),
+        None => render_template(NOTE_TEMPLATE, &name, &today, &datetime),
     };
 
     let lock_path = st.relative(&abs);

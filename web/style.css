@@ -1107,3 +1107,10 @@ body.wide .wrap { max-width: none; }
 .tag-node .caret { font-size: 12px; width: 14px; }
 .tag-node .tag-name { text-decoration: none; }
 .tag-node .tag-name:hover { text-decoration: underline; }
+
+/* 新建笔记弹窗 */
+.new-note-modal { min-width: 380px; }
+.form-row { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.form-row > span { width: 44px; color: var(--muted); font-size: 12.5px; }
+.form-row .todo-filter, .form-row .quick-add { flex: 1; width: auto; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
