@@ -76,7 +76,10 @@ http://127.0.0.1:8080/?token=<64位随机串>
 按顺序做完再发：
 
 ```powershell
-# 1) 单元测试（22 项）
+# 0) 一条命令跑完全部自动验证（构建 / 单测 / clippy / 冒烟 / 边界 / 平替预演 / 13 项浏览器交互）
+pwsh -File tools\release-gate.ps1
+
+# 1) 单元测试（25 项）
 cargo test
 
 # 2) 静态检查
