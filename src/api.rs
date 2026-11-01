@@ -968,6 +968,9 @@ struct SearchParams {
     /// open / done / all（默认 all）
     #[serde(default)]
     status: Option<String>,
+    /// all / text（text = 只要正文，排除代码块命中）
+    #[serde(default)]
+    scope: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
 }
@@ -1019,6 +1022,9 @@ async fn search(State(st): State<Arc<AppState>>, Query(p): Query<SearchParams>) 
         let lines: Vec<&str> = file.content.lines().collect();
         let flags = crate::markdown::code_block_flags(&lines);
         for (idx, line) in lines.iter().enumerate() {
+            if p.scope.as_deref() == Some("text") && flags[idx] {
+                continue;
+            }
             let state = crate::markdown::todo_state(line);
             match p.status.as_deref() {
                 Some("open") if state == Some(true) => continue,

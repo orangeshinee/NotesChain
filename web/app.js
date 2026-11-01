@@ -16,6 +16,7 @@ const state = {
   pathSet: new Set(),
   tagSort: 'name',
   todoTag: '',
+  searchScope: 'all',
   largeAssets: [],
   collapsedTags: new Set(),
   leafEls: new Map(),
@@ -930,7 +931,7 @@ async function showSearch(q) {
   wrap.append(loadingState(`搜索「${q}」…`));
   main.append(wrap);
   try {
-    const data = await api('/api/search?q=' + encodeURIComponent(q) + '&status=' + state.searchStatus);
+    const data = await api('/api/search?q=' + encodeURIComponent(q) + '&status=' + state.searchStatus + '&scope=' + state.searchScope);
     const list = el('ul', 'results');
     for (const item of data.items) {
       const li = el('li');
@@ -961,6 +962,14 @@ async function showSearch(q) {
       wrap.replaceChildren(list);
     }
     const head = docHead('搜索', `${data.total} 处命中`, q);
+    const bodyOnly = el('button', state.searchScope === 'text' ? 'seg active' : 'seg', '仅看正文');
+    bodyOnly.type = 'button';
+    bodyOnly.title = '排除代码块里的命中';
+    bodyOnly.addEventListener('click', () => {
+      state.searchScope = state.searchScope === 'text' ? 'all' : 'text';
+      showSearch(q);
+    });
+    head.append(bodyOnly);
     head.append(statusToggle(() => showSearch(q)));
     main.replaceChildren(head, wrap);
   } catch (err) {
