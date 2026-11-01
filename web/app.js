@@ -775,7 +775,7 @@ async function showFile(path, line) {
     },
   });
   currentEditor.focus();
-  if (line) scrollToLine(line);
+  if (line) highlightLine(line);
   if (state.links) mountBacklinks(wrap, path);
 }
 
@@ -920,6 +920,14 @@ function hideConflict(wrap) {
   if (existing) existing.remove();
 }
 
+function highlightLine(lineNumber) {
+  if (!currentEditor || !currentEditor.view) return;
+  const view = currentEditor.view;
+  const number = Math.min(Math.max(1, lineNumber), view.state.doc.lines);
+  const line = view.state.doc.line(number);
+  view.dispatch({ selection: { anchor: line.from, head: line.to }, scrollIntoView: true });
+  view.focus();
+}
 function scrollToLine(line) {
   const blocks = Array.from(document.querySelectorAll('.doc [data-line]'));
   let target = null;

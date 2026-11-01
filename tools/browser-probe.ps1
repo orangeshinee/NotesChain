@@ -202,7 +202,7 @@ try {
   return JSON.stringify({
     hash: decodeURIComponent(location.hash).slice(0, 60),
     title: document.querySelector('.doc-head .title')?.textContent || '',
-    highlighted: document.querySelectorAll('.ln-highlight').length,
+    selected: (window.getSelection()?.toString() || '').slice(0, 40),
   });
 })()
 '@
