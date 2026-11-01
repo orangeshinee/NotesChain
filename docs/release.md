@@ -85,6 +85,9 @@ cargo clippy --all-targets
 # 3) 端到端冒烟（18 项，会在 .demo\smoke-notes 造语料）
 pwsh -File tools\smoke.ps1
 
+# 2.4) 边界场景（怪文件名 / 大文件 / GBK / .gitignore / 空目录）
+pwsh -File tools\edge-check.ps1
+
 # 2.5) 真实目录只读体检（不建仓库、不改文件）
 pwsh -File tools\verify-real-dir.ps1 -Path "D:\notes" -Out .\体检报告.md
 
