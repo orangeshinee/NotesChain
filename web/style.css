@@ -966,3 +966,10 @@ table.todos th { position: relative; user-select: none; }
   accent-color: var(--accent);
   cursor: pointer;
 }
+
+/* 待办表分块渲染：跳过视口外的布局与绘制 */
+table.todos tbody tr[data-path] {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 40px;
+}
+table.todos tr.sentinel td { height: 1px; padding: 0; border: none; }

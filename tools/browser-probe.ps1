@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [int]$DebugPort = 9333
@@ -42,7 +42,7 @@ function Receive-Cdp($ws, $timeoutMs = 5000) {
 function Eval-Js($ws, $expression, [ref]$id) {
   $id.Value++
   Send-Cdp $ws $id.Value "Runtime.evaluate" @{ expression = $expression; returnByValue = $true; awaitPromise = $true }
-  $deadline = (Get-Date).AddSeconds(8)
+  $deadline = (Get-Date).AddSeconds(20)
   while ((Get-Date) -lt $deadline) {
     $msg = Receive-Cdp $ws 1500
     if (-not $msg) { continue }
@@ -236,6 +236,25 @@ try {
 })()
 '@
     $results += "preview => " + (Eval-Js $ws $js ([ref]$id))
+  }
+
+  if (& $want "virtual") {
+    Reload-Page $ws ($Url + "#/") ([ref]$id)
+    $id++
+    $js = @'
+(async () => {
+  const main = document.querySelector('.main');
+  const count = () => document.querySelectorAll('table.todos tr[data-path]').length;
+  const first = count();
+  const total = (document.querySelector('.doc-head .right')?.textContent || '').replace(/[^0-9]/g, '');
+  for (let i = 0; i < 1; i += 1) {
+    main.scrollTop = main.scrollHeight;
+    await new Promise((r) => setTimeout(r, 600));
+  }
+  return JSON.stringify({ first, afterScroll: count(), total });
+})()
+'@
+    $results += "virtual => " + (Eval-Js $ws $js ([ref]$id))
   }
 
   if (& $want "resize") {

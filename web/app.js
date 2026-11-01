@@ -585,7 +585,7 @@ function buildTodoTable(items) {
     body.append(tr);
   }
 
-  for (const todo of items) {
+  const makeRow = (todo) => {
     const tr = el('tr');
     tr.dataset.path = todo.path;
     tr.dataset.line = todo.line;
@@ -624,8 +624,38 @@ function buildTodoTable(items) {
     }
 
     tr.append(tdCheck, tdText, tdFile, tdTags);
-    body.append(tr);
-  }
+    return tr;
+  };
+
+  // 分块渲染：先渲染前 200 行，滚动到哨兵再追加下一批（PRD 4.1 虚拟列表）
+  const CHUNK = 200;
+  let rendered = 0;
+  const sentinel = el('tr', 'sentinel');
+  const sentinelCell = el('td');
+  sentinelCell.colSpan = 4;
+  sentinel.append(sentinelCell);
+
+  const appendChunk = () => {
+    const end = Math.min(rendered + CHUNK, items.length);
+    const frag = document.createDocumentFragment();
+    for (let i = rendered; i < end; i += 1) frag.append(makeRow(items[i]));
+    body.insertBefore(frag, sentinel);
+    rendered = end;
+    if (rendered >= items.length) {
+      sentinel.remove();
+      observer.disconnect();
+    }
+  };
+
+  body.append(sentinel);
+  const observer = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) appendChunk();
+    },
+    { root: main, rootMargin: '400px' }
+  );
+  observer.observe(sentinel);
+  appendChunk();
 
   table.append(head, body);
   return table;
