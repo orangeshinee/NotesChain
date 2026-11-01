@@ -25,7 +25,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -73,9 +73,9 @@ jobs:
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
             # tag 已发过 release：覆盖资产，允许从手动重跑补传
-            gh release upload $tag @assets --clobber
+            gh release upload $tag $assets --clobber
           } else {
-            gh release create $tag --verify-tag --title "NotesChain $tag" --generate-notes @assets
+            gh release create $tag --verify-tag --title "NotesChain $tag" --generate-notes $assets
           }
 
           gh release view $tag --json url --jq .url
