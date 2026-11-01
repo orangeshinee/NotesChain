@@ -1080,3 +1080,30 @@ td.idx-cell {
 
 /* 宽屏模式 */
 body.wide .wrap { max-width: none; }
+
+/* 元数据卡片（frontmatter） */
+.meta-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-side) 60%, transparent);
+  padding: 10px 14px;
+  margin: 0 0 18px;
+  font-size: 12.5px;
+}
+.meta-card table { border-collapse: collapse; width: 100%; }
+.meta-card th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  width: 90px;
+  padding: 2px 12px 2px 0;
+  vertical-align: top;
+  white-space: nowrap;
+}
+.meta-card td { padding: 2px 0; color: var(--fg); }
+
+/* 标签树：整行可点、箭头更明显 */
+.tag-node { cursor: pointer; }
+.tag-node .caret { font-size: 12px; width: 14px; }
+.tag-node .tag-name { text-decoration: none; }
+.tag-node .tag-name:hover { text-decoration: underline; }

@@ -134,7 +134,7 @@ try {
   "9. 每日文件模板"
   Remove-Item (Join-Path $notes "2026\11\2026-11-01.md") -Force
   $daily = Invoke-RestMethod -Uri "$base/api/daily" -Method Post -WebSession $session
-  Check "按模板新建当天文件" ($daily.created -eq $true -and $daily.content -match '## 今日日程' -and $daily.content -match '## 待办')
+  Check "按模板新建当天文件" ($daily.created -eq $true -and $daily.content -match '## 日程' -and $daily.content -match '## 待办')
 }
 finally {
   Get-Process -Id $proc.Id -ErrorAction SilentlyContinue | Stop-Process -Force

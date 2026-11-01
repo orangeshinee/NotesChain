@@ -91,7 +91,44 @@ function inline(raw) {
   return s;
 }
 
+function splitFrontmatter(text) {
+  if (!text.startsWith('---')) return { meta: null, body: text };
+  const lines = text.split('\n');
+  if (lines[0].trim() !== '---') return { meta: null, body: text };
+  const end = lines.findIndex((line, i) => i > 0 && line.trim() === '---');
+  if (end < 0) return { meta: null, body: text };
+  return { meta: lines.slice(1, end), body: lines.slice(end + 1).join('\n') };
+}
+
+function renderMetaCard(metaLines) {
+  const rows = [];
+  for (const line of metaLines) {
+    const at = line.indexOf(':');
+    if (at < 0) continue;
+    const key = line.slice(0, at).trim();
+    const value = line.slice(at + 1).trim();
+    if (!key) continue;
+    rows.push({ key, value });
+  }
+  if (!rows.length) return '';
+  let html = '<div class="meta-card"><table>';
+  for (const row of rows) {
+    let value = esc(row.value);
+    if (row.key === 'tags') {
+      const inner = row.value.replace(/^\[|\]$/g, '').trim();
+      value = inner
+        ? inner.split(',').map((tag) => `<span class="tag">#${esc(tag.trim())}</span>`).join(' ')
+        : '<span class="muted">—</span>';
+    }
+    html += `<tr><th>${esc(row.key)}</th><td>${value}</td></tr>`;
+  }
+  return html + '</table></div>';
+}
+
 function renderMarkdown(text) {
+  const fm = splitFrontmatter(text);
+  text = fm.body;
+  const metaHtml = fm.meta ? renderMetaCard(fm.meta) : '';
   const lines = text.split('\n');
   const n = lines.length;
   const out = [];
@@ -182,7 +219,7 @@ function renderMarkdown(text) {
     else i++;
   }
 
-  return out.join('\n');
+  return metaHtml + out.join('\n');
 }
 
 function splitRow(line) {
@@ -302,6 +339,7 @@ function stopScheduleTicker() {
   }
 }
 async function showHome() {
+  const keepScroll = main.scrollTop;
   state.activePath = null;
   state.activeTag = null;
   markActive();
@@ -716,8 +754,8 @@ function buildTodoTable(items) {
     if (todo.done_at) tdText.append(el('span', 'done-at', '✅ ' + todo.done_at));
 
     const tdFile = el('td');
-    const file = el('span', 'file', todo.path.replace(/\\.md$/i, ''));
-    file.append(el('span', 'ln', ':' + todo.line));
+    const file = el('span', 'file', todo.path.split('/').pop().replace(/\\.md$/i, ''));
+    file.title = todo.path + ':' + todo.line;
     file.addEventListener('click', () => go('/file/' + encodeURIComponent(todo.path)));
     tdFile.append(file);
 
@@ -1461,9 +1499,12 @@ function renderTagTree(nodes) {
       }
 
       row.append(caret);
-      row.append(el('span', 'tag-name', node.name));
+      const nameSpan = el('span', 'tag-name', node.name);
+      nameSpan.title = '点击查看 #' + node.path;
+      nameSpan.addEventListener('click', (event) => { event.stopPropagation(); go('/tag/' + encodeURIComponent(node.path)); });
+      row.append(nameSpan);
       row.append(el('span', 'n', `${node.notes} 篇 / ${node.todos} 待办`));
-      row.addEventListener('click', () => go('/tag/' + encodeURIComponent(node.path)));
+      row.addEventListener('click', () => { const sub = row.nextElementSibling; if (!hasChildren || !sub) { go('/tag/' + encodeURIComponent(node.path)); return; } if (state.expandedTags.has(node.path)) state.expandedTags.delete(node.path); else state.expandedTags.add(node.path); sub.hidden = !state.expandedTags.has(node.path); caret.classList.toggle('open', !sub.hidden); });
       container.append(row);
 
       if (hasChildren) {

@@ -35,7 +35,7 @@ pub fn parse(content: &str) -> Section {
         if trimmed.starts_with('#') {
             let level = trimmed.chars().take_while(|c| *c == '#').count();
             let title = trimmed.trim_start_matches('#').trim();
-            if level == 2 && title == "今日日程" {
+            if level == 2 && (title == "今日日程" || title == "日程") {
                 inside = true;
                 continue;
             }
@@ -142,7 +142,7 @@ pub fn suspected_outside_section(content: &str) -> Vec<usize> {
         if trimmed.starts_with('#') {
             let level = trimmed.chars().take_while(|c| *c == '#').count();
             let title = trimmed.trim_start_matches('#').trim();
-            if level == 2 && title == "今日日程" {
+            if level == 2 && (title == "今日日程" || title == "日程") {
                 inside = true;
                 continue;
             }
