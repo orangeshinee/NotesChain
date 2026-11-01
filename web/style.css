@@ -218,6 +218,20 @@ body {
 .doc .link-ph { color: var(--accent); border-bottom: 1px solid var(--line); }
 .doc .ln-highlight { background: var(--mark); border-radius: 3px; }
 
+.more-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 0;
+}
+.snippet.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.seg.tiny { font-size: 11.5px; padding: 1px 7px; margin-top: 4px; }
+button.quick { background: none; font: inherit; cursor: pointer; }
 /* ---------------- 快捷导航 / 历史 ---------------- */
 .quicknav { display: flex; gap: 6px; padding: 0 12px 8px; }
 .quick {

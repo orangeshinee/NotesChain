@@ -8,6 +8,7 @@ const state = {
   searchStatus: 'all',
   scheduleRange: 'week',
   links: false,
+  todoLimit: 1000,
   leafEls: new Map(),
 };
 
@@ -281,14 +282,14 @@ async function showHome() {
   main.append(wrap);
   try {
     const [todos, git, schedule] = await Promise.all([
-      api('/api/todos'),
+      api('/api/todos?limit=' + state.todoLimit),
       api('/api/git/status').catch(() => null),
       api('/api/schedule?range=' + state.scheduleRange).catch(() => null),
     ]);
     setGit(git);
     const parts = [];
     if (schedule) parts.push(buildSchedule(schedule));
-    parts.push(buildTodoSection(todos));
+    parts.push(buildTodoSection(todos, () => { state.todoLimit = 50000; showHome(); }));
     wrap.replaceChildren(...parts);
     main.replaceChildren(docHead('首页', `未完成 ${todos.total} 条`), wrap);
   } catch (err) {
@@ -360,12 +361,24 @@ function buildSchedule(data) {
   return section;
 }
 
-function buildTodoSection(todos) {
+function buildTodoSection(todos, onShowAll) {
   const section = el('section', 'todos-section');
   const head = el('div', 'section-head');
   head.append(el('h2', '', '待办'));
   head.append(el('span', 'muted', `${todos.total} 条未完成`));
   section.append(head, buildTodoTable(todos.items));
+
+  if (todos.total > todos.items.length) {
+    const bar = el('div', 'more-bar');
+    bar.append(el('span', 'muted', `当前显示 ${todos.items.length} / ${todos.total} 条`));
+    if (onShowAll) {
+      const btn = el('button', 'seg', '显示全部');
+      btn.type = 'button';
+      btn.addEventListener('click', onShowAll);
+      bar.append(btn);
+    }
+    section.append(bar);
+  }
   return section;
 }
 
@@ -662,9 +675,20 @@ async function showSearch(q) {
       const li = el('li');
       const meta = el('div', 'meta', `${item.path}:${item.line}`);
       meta.append(el('span', 'kind', kindLabel(item.kind)));
-      const snippet = el('div', 'snippet');
+      const isCode = item.kind === 'code';
+      const snippet = el('div', isCode ? 'snippet clamped' : 'snippet');
       snippet.innerHTML = highlight(item.snippet, q);
       li.append(meta, snippet);
+      if (isCode) {
+        const toggle = el('button', 'seg tiny', '展开');
+        toggle.type = 'button';
+        toggle.addEventListener('click', (event) => {
+          event.stopPropagation();
+          snippet.classList.toggle('clamped');
+          toggle.textContent = snippet.classList.contains('clamped') ? '展开' : '收起';
+        });
+        li.append(toggle);
+      }
       li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.path) + (item.line ? '@' + item.line : '')));
       list.append(li);
     }
@@ -704,18 +728,26 @@ async function showTag(path) {
   wrap.append(loadingState(`标签 #${path} …`));
   main.append(wrap);
   try {
-    const data = await api('/api/search?tag=' + encodeURIComponent(path));
+    const [files, todos] = await Promise.all([
+      api('/api/search?tag=' + encodeURIComponent(path)),
+      api('/api/todos?tag=' + encodeURIComponent(path) + '&limit=200').catch(() => ({ total: 0, items: [] })),
+    ]);
+    const parts = [];
+    if (todos.total) {
+      parts.push(buildTodoSection(todos, null));
+    }
     const list = el('ul', 'results');
-    for (const item of data.items) {
+    for (const item of files.items) {
       const li = el('li');
       li.append(el('div', 'meta', item.path));
       li.append(el('div', 'snippet', item.snippet));
       li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.path)));
       list.append(li);
     }
-    if (!data.items.length) wrap.replaceChildren(el('div', 'empty-state', '这个标签下还没有笔记。'));
-    else wrap.replaceChildren(list);
-    main.replaceChildren(docHead('#' + path, `${data.total} 篇`, ''), wrap);
+    if (!files.items.length) parts.push(el('div', 'empty-state', '这个标签下还没有笔记。'));
+    else parts.push(list);
+    wrap.replaceChildren(...parts);
+    main.replaceChildren(docHead('#' + path, `${files.total} 篇 · ${todos.total} 条待办`, ''), wrap);
   } catch (err) {
     wrap.replaceChildren(errorState(err));
   }
@@ -870,6 +902,21 @@ async function route() {
   return showHome();
 }
 
+// Ctrl/Cmd+K 聚焦搜索；非输入态按 / 也可以
+document.addEventListener('keydown', (event) => {
+  const tag = (event.target.tagName || '').toLowerCase();
+  const typing = tag === 'input' || tag === 'textarea' || event.target.isContentEditable;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+    return;
+  }
+  if (event.key === '/' && !typing) {
+    event.preventDefault();
+    searchInput.focus();
+  }
+});
 let searchTimer = null;
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
@@ -995,6 +1042,19 @@ async function refreshFromDisk() {
   } catch (err) {
     /* 文件可能被删了，交给下一次导航处理 */
   }
+}
+
+const refreshBtn = document.getElementById('refresh');
+if (refreshBtn) {
+  refreshBtn.addEventListener('click', async () => {
+    refreshBtn.disabled = true;
+    try {
+      await loadSidebar();
+      await route();
+    } finally {
+      refreshBtn.disabled = false;
+    }
+  });
 }
 
 async function boot() {

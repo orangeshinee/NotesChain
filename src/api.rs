@@ -274,10 +274,48 @@ async fn config(State(st): State<Arc<AppState>>) -> Json<Value> {
 async fn revision(State(st): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({ "revision": st.revision.load(std::sync::atomic::Ordering::SeqCst) }))
 }
-async fn list_todos(State(st): State<Arc<AppState>>) -> Json<Value> {
+#[derive(Deserialize)]
+struct TodoParams {
+    /// 只返回带该标签（含子标签）的待办
+    #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    offset: Option<usize>,
+}
+
+async fn list_todos(
+    State(st): State<Arc<AppState>>,
+    Query(p): Query<TodoParams>,
+) -> Json<Value> {
     let index = st.index.read().await;
-    let rows = index.open_todos();
-    Json(json!({ "total": rows.len(), "items": rows }))
+    let mut rows = index.open_todos();
+
+    if let Some(tag) = p
+        .tag
+        .as_deref()
+        .map(|t| t.trim().trim_start_matches('#').to_string())
+        .filter(|t| !t.is_empty())
+    {
+        rows.retain(|row| {
+            row.tags
+                .iter()
+                .any(|t| t == &tag || t.starts_with(&format!("{tag}/")))
+        });
+    }
+
+    let total = rows.len();
+    let offset = p.offset.unwrap_or(0).min(total);
+    let limit = p.limit.unwrap_or(5000).min(50_000);
+    let items: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
+
+    Json(json!({
+        "total": total,
+        "offset": offset,
+        "returned": items.len(),
+        "items": items,
+    }))
 }
 
 #[derive(Deserialize)]
