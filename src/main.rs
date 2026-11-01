@@ -6,6 +6,7 @@ mod api;
 mod git;
 mod index;
 mod markdown;
+mod schedule;
 mod state;
 mod todo_write;
 

@@ -28,6 +28,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/todos", get(list_todos).patch(patch_todo))
         .route("/api/tags", get(list_tags))
         .route("/api/search", get(search))
+        .route("/api/schedule", get(schedule_view))
         .route("/api/daily", post(ensure_daily))
         .route("/api/index/rebuild", post(rebuild_index))
         .route("/api/git/status", get(git_status))
@@ -348,6 +349,103 @@ async fn rebuild_index(State(st): State<Arc<AppState>>) -> Result<Json<Value>, A
 async fn git_status(State(st): State<Arc<AppState>>) -> Json<Value> {
     let status = st.git.status().await;
     Json(serde_json::to_value(status).unwrap_or_else(|_| json!({ "available": false })))
+}
+
+// ---------------------------------------------------------------- 日程
+
+#[derive(Deserialize)]
+struct ScheduleParams {
+    /// today / week / month，缺省 week
+    #[serde(default)]
+    range: Option<String>,
+}
+
+async fn schedule_view(
+    State(st): State<Arc<AppState>>,
+    Query(p): Query<ScheduleParams>,
+) -> Json<Value> {
+    use chrono::{Datelike, Duration, Local, NaiveDate};
+
+    let today = Local::now().date_naive();
+    let range = p.range.as_deref().unwrap_or("week");
+
+    let (from, to) = match range {
+        "today" => (today, today),
+        "month" => {
+            let first = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
+            let next = if today.month() == 12 {
+                NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)
+            } else {
+                NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
+            };
+            let last = next.and_then(|n| n.pred_opt()).unwrap_or(first);
+            (first, last)
+        }
+        _ => {
+            let offset = today.weekday().num_days_from_monday() as i64;
+            let monday = today - Duration::days(offset);
+            (monday, monday + Duration::days(6))
+        }
+    };
+
+    let index = st.index.read().await;
+    let mut days = Vec::new();
+    let mut cursor = from;
+    while cursor <= to {
+        let date = cursor.format("%Y-%m-%d").to_string();
+        let is_today = cursor == today;
+        let entry = index
+            .files
+            .iter()
+            .find(|f| f.diary_date.as_deref() == Some(date.as_str()));
+
+        match entry {
+            Some(file) => {
+                let section = crate::schedule::parse(&file.content);
+                days.push(json!({
+                    "date": date,
+                    "weekday": weekday_cn(cursor),
+                    "today": is_today,
+                    "path": file.path,
+                    "items": section.items,
+                    "unrecognized": section.unrecognized,
+                }));
+            }
+            None if is_today => {
+                days.push(json!({
+                    "date": date,
+                    "weekday": weekday_cn(cursor),
+                    "today": true,
+                    "path": null,
+                    "items": [],
+                    "unrecognized": [],
+                }));
+            }
+            None => {}
+        }
+
+        cursor += Duration::days(1);
+    }
+
+    Json(json!({
+        "range": range,
+        "from": from.format("%Y-%m-%d").to_string(),
+        "to": to.format("%Y-%m-%d").to_string(),
+        "days": days,
+    }))
+}
+
+fn weekday_cn(d: chrono::NaiveDate) -> &'static str {
+    use chrono::Datelike;
+    match d.weekday().num_days_from_monday() {
+        0 => "周一",
+        1 => "周二",
+        2 => "周三",
+        3 => "周四",
+        4 => "周五",
+        5 => "周六",
+        _ => "周日",
+    }
 }
 
 // ---------------------------------------------------------------- 标签树

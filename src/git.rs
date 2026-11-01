@@ -65,11 +65,14 @@ impl Git {
         let runtime = Arc::new(Mutex::new(Runtime::default()));
 
         if let Some(repo) = repo_root.clone() {
-            let worker_root = root.clone();
-            let state = runtime.clone();
-            tokio::spawn(async move {
-                worker(rx, worker_root, repo, state).await;
-            });
+            // 单元测试里没有 Tokio 运行时：不启动提交协程即可
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let worker_root = root.clone();
+                let state = runtime.clone();
+                handle.spawn(async move {
+                    worker(rx, worker_root, repo, state).await;
+                });
+            }
         }
 
         Arc::new(Git {

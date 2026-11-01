@@ -6,6 +6,7 @@ const state = {
   activePath: null,
   activeTag: null,
   searchStatus: 'all',
+  scheduleRange: 'week',
   leafEls: new Map(),
 };
 
@@ -268,13 +269,93 @@ async function showHome() {
   wrap.append(loadingState());
   main.append(wrap);
   try {
-    const [todos, git] = await Promise.all([api('/api/todos'), api('/api/git/status').catch(() => null)]);
+    const [todos, git, schedule] = await Promise.all([
+      api('/api/todos'),
+      api('/api/git/status').catch(() => null),
+      api('/api/schedule?range=' + state.scheduleRange).catch(() => null),
+    ]);
     setGit(git);
-    wrap.replaceChildren(buildTodoTable(todos.items));
+    const parts = [];
+    if (schedule) parts.push(buildSchedule(schedule));
+    parts.push(buildTodoSection(todos));
+    wrap.replaceChildren(...parts);
     main.replaceChildren(docHead('首页', `未完成 ${todos.total} 条`), wrap);
   } catch (err) {
     wrap.replaceChildren(errorState(err));
   }
+}
+
+function buildSchedule(data) {
+  const section = el('section', 'schedule');
+  const head = el('div', 'section-head');
+  head.append(el('h2', '', '日程'));
+  const toggle = el('span', 'segmented');
+  for (const [value, label] of [['today', '本日'], ['week', '本周'], ['month', '本月']]) {
+    const btn = el('button', state.scheduleRange === value ? 'seg active' : 'seg', label);
+    btn.type = 'button';
+    btn.addEventListener('click', () => {
+      state.scheduleRange = value;
+      showHome();
+    });
+    toggle.append(btn);
+  }
+  head.append(toggle);
+  section.append(head);
+
+  const days = data.days || [];
+  if (!days.length) {
+    section.append(el('div', 'empty-state', '这一段时间里没有日记文件。'));
+    return section;
+  }
+
+  for (const day of days) {
+    const box = el('div', day.today ? 'day today' : 'day');
+    const dh = el('div', 'day-head');
+    if (day.today) dh.append(el('span', 'pill', '今天'));
+    dh.append(el('span', 'date', `${day.date.slice(5).replace('-', '/')} ${day.weekday}`));
+    if (day.items.length) dh.append(el('span', 'muted', `${day.items.length} 项`));
+    box.append(dh);
+
+    if (day.items.length) {
+      const list = el('ul', 'slots');
+      for (const item of day.items) {
+        const li = el('li');
+        const time = item.end ? `${item.start}–${item.end}` : item.start;
+        li.append(el('span', 'time', time));
+        li.append(el('span', 'what', item.title));
+        if (item.place) li.append(el('span', 'place', '@' + item.place));
+        for (const tag of item.tags) li.append(el('span', 'tag', '#' + tag));
+        list.append(li);
+      }
+      box.append(list);
+    } else {
+      box.append(el('div', 'muted empty-line', '无日程'));
+    }
+
+    if (day.unrecognized && day.unrecognized.length) {
+      if (day.today) {
+        const unrec = el('div', 'unrec');
+        unrec.append(el('span', 'muted', '未识别时间：'));
+        unrec.append(el('span', '', day.unrecognized.join('、')));
+        box.append(unrec);
+      } else {
+        box.append(el('div', 'unrec muted', `${day.unrecognized.length} 行未识别`));
+      }
+    }
+
+    section.append(box);
+  }
+
+  return section;
+}
+
+function buildTodoSection(todos) {
+  const section = el('section', 'todos-section');
+  const head = el('div', 'section-head');
+  head.append(el('h2', '', '待办'));
+  head.append(el('span', 'muted', `${todos.total} 条未完成`));
+  section.append(head, buildTodoTable(todos.items));
+  return section;
 }
 
 function buildTodoTable(items) {
