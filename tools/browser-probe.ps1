@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "clicks", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [int]$DebugPort = 9333
@@ -255,6 +255,34 @@ try {
 })()
 '@
     $results += "virtual => " + (Eval-Js $ws $js ([ref]$id))
+  }
+
+  if (& $want "clicks") {
+    Reload-Page $ws ($Url + $Hash) ([ref]$id)
+    $id++
+    $js = @'
+(async () => {
+  const out = {};
+  const start = location.hash;
+  const link = document.querySelector('.cm-link');
+  if (link) {
+    link.click();
+    await new Promise((r) => setTimeout(r, 900));
+    out.afterLink = decodeURIComponent(location.hash);
+  }
+  // 回到起始文件再测双链
+  location.hash = start;
+  await new Promise((r) => setTimeout(r, 1000));
+  const wiki = document.querySelector('.cm-wikilink');
+  if (!wiki) return JSON.stringify(Object.assign(out, { wikiFound: false }));
+  wiki.click();
+  await new Promise((r) => setTimeout(r, 1000));
+  out.afterWiki = decodeURIComponent(location.hash);
+  out.wikiFound = true;
+  return JSON.stringify(out);
+})()
+'@
+    $results += "clicks => " + (Eval-Js $ws $js ([ref]$id))
   }
 
   if (& $want "quickadd") {

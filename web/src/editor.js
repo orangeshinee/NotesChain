@@ -386,7 +386,8 @@ function buildDecorations(view, assetFor, linksEnabled, linkExists) {
         const task = /^(\s*)- \[([ xX])\]\s?/.exec(text);
         if (task) {
           ranges.push({
-            from: line.from,
+            // 从缩进之后开始替换，保留行首空格，否则子任务会和父任务看起来平级
+            from: line.from + task[1].length,
             to: line.from + task[0].length,
             deco: Decoration.replace({
               widget: new CheckboxWidget(task[2].toLowerCase() === 'x', line.from + task[1].length),

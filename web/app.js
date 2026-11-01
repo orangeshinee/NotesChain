@@ -824,8 +824,17 @@ async function showFile(path, line) {
   main.replaceChildren(head, layout);
   renderOutline(outline, data.content);
 
+  let saving = false;
+  let queued = false;
+
   const flush = async (force = false) => {
     if (!currentEditor || !dirty) return;
+    // 串行化：同一时刻只允许一个保存请求，避免两次自动保存撞版本号
+    if (saving) {
+      queued = true;
+      return;
+    }
+    saving = true;
     const content = currentEditor.getValue();
     setStatus(status, 'saving', '保存中…');
     try {
@@ -840,6 +849,19 @@ async function showFile(path, line) {
       hideConflict(wrap);
     } catch (err) {
       if (err.code === 'conflict') {
+        // 先看磁盘内容是否其实和我们一样（其它入口刚写过同样的内容），一样就静默对齐版本
+        try {
+          const fresh = await api('/api/files/' + encodeURI(path));
+          if (fresh.content === content) {
+            version = fresh.version;
+            dirty = false;
+            setStatus(status, 'saved', '已保存 ' + timeNow());
+            hideConflict(wrap);
+            return;
+          }
+        } catch (e) {
+          /* 读不到就走下面的冲突提示 */
+        }
         setStatus(status, 'conflict', '有冲突');
         showConflict(wrap, {
           onReload: async () => {
@@ -859,6 +881,12 @@ async function showFile(path, line) {
       } else {
         setStatus(status, 'conflict', '保存失败');
         showConflict(wrap, { message: String(err.message || err) });
+      }
+    } finally {
+      saving = false;
+      if (queued) {
+        queued = false;
+        flush(false);
       }
     }
   };
@@ -1498,18 +1526,29 @@ searchInput.addEventListener('input', () => {
 
 window.addEventListener('hashchange', route);
 
-function openHref(href) {
-  const clean = String(href || '').split('#')[0].trim();
-  if (!clean) return;
-  const base = state.activePath ? state.activePath.split('/').slice(0, -1).join('/') : '';
+function normalizeRel(base, href) {
   const segs = [];
-  for (const seg of ((base ? base + '/' : '') + clean).split('/')) {
+  for (const seg of ((base ? base + '/' : '') + href).split('/')) {
     if (!seg || seg === '.') continue;
     if (seg === '..') segs.pop();
     else segs.push(seg);
   }
-  const path = segs.join('/');
-  if (!/\.md$/i.test(path)) return;
+  return segs.join('/');
+}
+
+function openHref(href) {
+  const clean = String(href || '').split('#')[0].trim();
+  if (!clean) return;
+  if (/^https?:/i.test(clean)) {
+    window.open(clean, '_blank', 'noreferrer');
+    return;
+  }
+  if (!/\.md$/i.test(clean)) return;
+  const base = state.activePath ? state.activePath.split('/').slice(0, -1).join('/') : '';
+  // 双轨：先按当前文件相对路径，找不到再按 notes 根（与图片解析一致）
+  const relative = normalizeRel(base, clean);
+  const rooted = normalizeRel('', clean);
+  const path = state.pathSet.has(relative) ? relative : rooted;
   go('/file/' + encodeURIComponent(path));
 }
 async function openLink(target) {

@@ -1004,3 +1004,15 @@ table.todos tr.sentinel td { height: 1px; padding: 0; border: none; }
   body { background: #fff; color: #000; }
 }
 @page { margin: 16mm; }
+
+/* 修复：文件树层级缩进（月级缩进到年下面） */
+.tree details details { margin-left: 12px; }
+.tree details details .leaf { padding-left: 20px; }
+
+/* 修复：大纲按级别缩进 */
+.outline-item.level-1 { padding-left: 6px; }
+.outline-item.level-2 { padding-left: 18px; }
+.outline-item.level-3 { padding-left: 30px; }
+.outline-item.level-4 { padding-left: 42px; }
+.outline-item.level-5 { padding-left: 52px; }
+.outline-item.level-6 { padding-left: 62px; }
