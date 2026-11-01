@@ -268,7 +268,7 @@ async fn read_file(State(st): State<Arc<AppState>>, AxumPath(path): AxumPath<Str
     let content = std::fs::read_to_string(&abs).map_err(ApiError::internal)?;
     let content = content.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(content);
     let mtime = mtime_ms(&abs);
-    let version = crate::index::version_of(mtime, &content);
+    let version = crate::index::version_of_text(mtime, &content);
     let uses_crlf = content.contains("\r\n");
     let normalized = if uses_crlf {
         content.replace("\r\n", "\n")
@@ -304,13 +304,16 @@ async fn save_file(
     Query(q): Query<ForceQuery>,
     Json(body): Json<SaveRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    if !path.to_ascii_lowercase().ends_with(".md") {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "只支持保存 .md 文件"));
+    }
     let abs = st.resolve(&path).map_err(ApiError::bad_path)?;
     let rel = st.relative(&abs);
     let lock = st.lock_for(&rel).await;
     let _guard = lock.lock().await;
 
     let current = std::fs::read_to_string(&abs).unwrap_or_default();
-    let current_version = crate::index::version_of(mtime_ms(&abs), &current);
+    let current_version = crate::index::version_of_text(mtime_ms(&abs), &current);
     if current_version != body.version && !q.force.unwrap_or(false) {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -339,7 +342,7 @@ async fn save_file(
     let mtime = mtime_ms(&abs);
     Ok(Json(json!({
         "path": rel,
-        "version": crate::index::version_of(mtime, &body.content),
+        "version": crate::index::version_of_text(mtime, &body.content),
     })))
 }
 
@@ -511,6 +514,9 @@ async fn patch_todo(
     State(st): State<Arc<AppState>>,
     Json(body): Json<PatchTodoRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    if !body.path.to_ascii_lowercase().ends_with(".md") {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "只支持 .md 文件"));
+    }
     let abs = st.resolve(&body.path).map_err(ApiError::bad_path)?;
     let rel = st.relative(&abs);
     let lock = st.lock_for(&rel).await;
@@ -527,17 +533,24 @@ async fn patch_todo(
         })?;
 
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    let original = lines.get(located).cloned().unwrap_or_default();
-    lines[located] = todo_write::toggle_line(&original, body.done, &now);
-
-    let uses_crlf = content.contains("\r\n");
-    let mut updated = lines.join("\n");
-    if content.ends_with('\n') {
-        updated.push('\n');
+    // 按行切分并保留每行自己的行尾，避免混合 EOL 文件被整篇改写
+    let mut segments: Vec<String> = content.split_inclusive('\n').map(|s| s.to_string()).collect();
+    let ends_with_newline = content.ends_with('\n');
+    if segments.len() < located + 1 {
+        return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "todo_relocate_failed", "行号越界"));
     }
-    if uses_crlf {
-        updated = updated.replace('\n', "\r\n");
+    let segment = &segments[located];
+    let (body_text, terminator) = if let Some(stripped) = segment.strip_suffix("\r\n") {
+        (stripped.to_string(), "\r\n")
+    } else if let Some(stripped) = segment.strip_suffix('\n') {
+        (stripped.to_string(), "\n")
+    } else {
+        (segment.clone(), "")
+    };
+    segments[located] = format!("{}{}", todo_write::toggle_line(&body_text, body.done, &now), terminator);
+    let mut updated = segments.concat();
+    if ends_with_newline && !updated.ends_with('\n') {
+        updated.push('\n');
     }
 
     todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
@@ -549,7 +562,7 @@ async fn patch_todo(
     Ok(Json(json!({
         "path": rel,
         "line": located + 1,
-        "version": crate::index::version_of(mtime, &updated),
+        "version": crate::index::version_of_text(mtime, &updated),
     })))
 }
 
@@ -647,9 +660,6 @@ async fn create_note(
     }
 
     let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
-    if abs.exists() {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "同名文件已存在"));
-    }
 
     let is_diary = body.r#type.as_deref() == Some("diary")
         || body.date.is_some()
@@ -675,6 +685,9 @@ async fn create_note(
     let lock_path = st.relative(&abs);
     let lock = st.lock_for(&lock_path).await;
     let _guard = lock.lock().await;
+    if abs.exists() {
+        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "同名文件已存在"));
+    }
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
     }
@@ -692,7 +705,7 @@ async fn create_note(
         "path": lock_path,
         "type": if is_diary { "diary" } else { "note" },
         "content": content,
-        "version": crate::index::version_of(mtime_ms(&abs), &content),
+        "version": crate::index::version_of_text(mtime_ms(&abs), &content),
     })))
 }
 
@@ -714,6 +727,15 @@ struct AppendTodoRequest {
     /// 不传则写进今天的日记
     #[serde(default)]
     path: Option<String>,
+}
+
+fn insert_into_section_any(content: &str, headings: &[&str], line: &str) -> (String, usize) {
+    for heading in headings {
+        if content.lines().any(|l| l.trim() == *heading) {
+            return insert_into_section(content, heading, line);
+        }
+    }
+    insert_into_section(content, headings[0], line)
 }
 
 fn insert_into_section(content: &str, heading: &str, line: &str) -> (String, usize) {
@@ -788,7 +810,8 @@ async fn append_todo(
         .unwrap_or_else(|| format!("{}/{}/{}.md", &today[..4], &today[5..7], today));
 
     let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
-    let lock = st.lock_for(&rel).await;
+    let lock_key = st.relative(&abs);
+    let lock = st.lock_for(&lock_key).await;
     let _guard = lock.lock().await;
 
     let exists = abs.is_file();
@@ -798,7 +821,7 @@ async fn append_todo(
         render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
     };
 
-    let (updated, line_no) = insert_into_section(&content, "## 待办", &format!("- [ ] {text}"));
+    let (updated, line_no) = insert_into_section_any(&content, &["## 待办"], &format!("- [ ] {text}"));
     if !exists {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
@@ -817,7 +840,7 @@ async fn append_todo(
     Ok(Json(json!({
         "path": rel,
         "line": line_no,
-        "version": crate::index::version_of(mtime_ms(&abs), &updated),
+        "version": crate::index::version_of_text(mtime_ms(&abs), &updated),
     })))
 }
 #[derive(Deserialize)]
@@ -845,7 +868,8 @@ async fn append_schedule(
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let rel = format!("{}/{}/{}.md", &today[..4], &today[5..7], today);
     let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
-    let lock = st.lock_for(&rel).await;
+    let lock_key = st.relative(&abs);
+    let lock = st.lock_for(&lock_key).await;
     let _guard = lock.lock().await;
 
     let exists = abs.is_file();
@@ -855,7 +879,7 @@ async fn append_schedule(
         render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
     };
 
-    let (updated, line_no) = insert_into_section(&content, "## 今日日程", &line);
+    let (updated, line_no) = insert_into_section_any(&content, &["## 日程", "## 今日日程"], &line);
     if !exists {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
@@ -874,7 +898,7 @@ async fn append_schedule(
     Ok(Json(json!({
         "path": rel,
         "line": line_no,
-        "version": crate::index::version_of(mtime_ms(&abs), &updated),
+        "version": crate::index::version_of_text(mtime_ms(&abs), &updated),
     })))
 }
 // ---------------------------------------------------------------- 每日文件 / 索引 / git
@@ -894,7 +918,7 @@ async fn ensure_daily(State(st): State<Arc<AppState>>) -> Result<Json<Value>, Ap
             "path": rel,
             "created": false,
             "content": content,
-            "version": crate::index::version_of(mtime, &content),
+            "version": crate::index::version_of_text(mtime, &content),
         })));
     }
 
@@ -911,7 +935,7 @@ async fn ensure_daily(State(st): State<Arc<AppState>>) -> Result<Json<Value>, Ap
         "path": rel,
         "created": true,
         "content": content,
-        "version": crate::index::version_of(mtime_ms(&abs), &content),
+        "version": crate::index::version_of_text(mtime_ms(&abs), &content),
     })))
 }
 
@@ -1120,7 +1144,19 @@ async fn git_restore(
     if !body.path.ends_with(".md") {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "只支持恢复 .md 文件"));
     }
-    let abs = st.resolve(&body.path).map_err(ApiError::bad_path)?;
+    // 前端传的是 diff 里的仓库相对路径（可能带 notes/ 前缀），统一剥成 notes 相对
+    let notes_prefix = st
+        .notes_root
+        .strip_prefix(&st.root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    let mut rel_in_notes = body.path.trim().trim_start_matches('/').to_string();
+    if !notes_prefix.is_empty() {
+        if let Some(rest) = rel_in_notes.strip_prefix(&format!("{notes_prefix}/")) {
+            rel_in_notes = rest.to_string();
+        }
+    }
+    let abs = st.resolve(&rel_in_notes).map_err(ApiError::bad_path)?;
     let rel = abs
         .strip_prefix(&repo)
         .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -1162,7 +1198,7 @@ async fn git_restore(
 
     Ok(Json(json!({
         "path": rel_path,
-        "version": crate::index::version_of(mtime_ms(&abs), &content),
+        "version": crate::index::version_of_text(mtime_ms(&abs), &content),
     })))
 }
 

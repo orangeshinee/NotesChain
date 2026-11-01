@@ -16,7 +16,8 @@ function Record($name, $ok, $detail) {
 "=== 0. 构建 ==="
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 & cargo build --release 2>&1 | Out-Null
-Record "cargo build --release" (Test-Path $exe) ""
+$buildCode = $LASTEXITCODE
+Record "cargo build --release" ($buildCode -eq 0 -and (Test-Path $exe)) "exit=$buildCode"
 
 "=== 1. 单元测试 ==="
 $testOut = (& cargo test 2>&1) -join "`n"
@@ -85,7 +86,11 @@ if (-not $SkipBrowser) {
     $hash = "#/file/" + [uri]::EscapeDataString("2026/11/2026-11-01.md")
     $probeOut = & pwsh -NoProfile -File (Join-Path $PSScriptRoot "browser-probe.ps1") -Url "http://127.0.0.1:$Port/?token=$token" -Hash $hash -NotesDir $gate -Scenario all 2>&1
     $probeText = $probeOut -join "`n"
+    $probeCode = $LASTEXITCODE
     $checks = [regex]::Matches($probeText, '(\w[\w-]*) => (.*)')
+    if ($checks.Count -eq 0) {
+      Record "浏览器探针（无断言）" $false "probe exit=$probeCode，输出无任何 '场景 => 结果'；视为失败"
+    }
     foreach ($c in $checks) {
       $value = $c.Groups[2].Value.Trim()
       $name = $c.Groups[1].Value

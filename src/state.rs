@@ -100,18 +100,26 @@ impl AppState {
             }
         }
         let joined = self.notes_root.join(candidate);
-        // 已存在则直接规范化；不存在则规范化其父目录，防软链接跳出
-        let resolved = if joined.exists() {
-            joined.canonicalize()?
-        } else {
-            let parent = joined.parent().context("路径没有父目录")?;
-            let parent = if parent.exists() {
-                parent.canonicalize()?
-            } else {
-                parent.to_path_buf()
-            };
-            parent.join(joined.file_name().context("路径缺少文件名")?)
-        };
+        // 规范化：向上找到最近的已存在祖先做 canonicalize，再把剩余层级接回去，
+        // 这样即使中间层级还不存在，也不会绕过软链接校验。
+        let mut existing = joined.clone();
+        let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+        while !existing.exists() {
+            match existing.file_name().map(|n| n.to_os_string()) {
+                Some(name) => {
+                    suffix.push(name);
+                    match existing.parent() {
+                        Some(parent) => existing = parent.to_path_buf(),
+                        None => break,
+                    }
+                }
+                None => break,
+            }
+        }
+        let mut resolved = existing.canonicalize()?;
+        for part in suffix.iter().rev() {
+            resolved.push(part);
+        }
         let resolved = simplify(resolved);
         if !resolved.starts_with(&self.notes_root) {
             anyhow::bail!("路径越界");

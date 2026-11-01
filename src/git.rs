@@ -247,7 +247,7 @@ fn run_commit(scope_root: &Path, repo_root: &Path) -> Result<Option<(usize, Stri
         ]);
     }
     let commit = cmd
-        .args(["commit", "-m", &message])
+        .args(["commit", "-m", &message, "--", &rel])
         .current_dir(repo_root)
         .output()
         .map_err(|e| format!("git commit 失败: {e}"))?;

@@ -961,18 +961,24 @@ async function showFile(path, line) {
   main.replaceChildren(head, layout);
   renderOutline(outline, data.content);
 
-  let saving = false;
-  let queued = false;
+  // 以「磁盘上的内容」为基准判断脏：只有编辑器和 lastSaved 不同才需要保存
+  let lastSaved = data.content;
+  let saveChain = Promise.resolve();
+  let suppressChange = false;
 
-  const flush = async (force = false) => {
-    if (!currentEditor || !dirty) return;
-    // 串行化：同一时刻只允许一个保存请求，避免两次自动保存撞版本号
-    if (saving) {
-      queued = true;
-      return;
-    }
-    saving = true;
-    const content = currentEditor.getValue();
+  const currentText = () => (currentEditor ? currentEditor.getValue() : lastSaved);
+  const isDirty = () => currentText() !== lastSaved;
+
+  const setSaved = (content) => {
+    lastSaved = content;
+    setStatus(status, 'saved', '已保存 ' + timeNow());
+    hideConflict(wrap);
+  };
+
+  const doSave = async (force = false) => {
+    if (!currentEditor) return true;
+    const content = currentText();
+    if (!force && content === lastSaved) return true;
     setStatus(status, 'saving', '保存中…');
     try {
       const res = await api('/api/files/' + encodeURI(path) + (force ? '?force=true' : ''), {
@@ -981,23 +987,21 @@ async function showFile(path, line) {
         body: JSON.stringify({ content, version, eol }),
       });
       version = res.version;
-      dirty = false;
-      setStatus(status, 'saved', '已保存 ' + timeNow());
-      hideConflict(wrap);
+      setSaved(content);
+      // 保存期间用户又输入了 → 继续保存，保证「已保存」等于磁盘包含全部输入
+      if (isDirty()) return flush(false);
+      return true;
     } catch (err) {
       if (err.code === 'conflict') {
-        // 先看磁盘内容是否其实和我们一样（其它入口刚写过同样的内容），一样就静默对齐版本
         try {
           const fresh = await api('/api/files/' + encodeURI(path));
           if (fresh.content === content) {
             version = fresh.version;
-            dirty = false;
-            setStatus(status, 'saved', '已保存 ' + timeNow());
-            hideConflict(wrap);
-            return;
+            setSaved(content);
+            return true;
           }
         } catch (e) {
-          /* 读不到就走下面的冲突提示 */
+          /* 读不到就按真冲突处理 */
         }
         setStatus(status, 'conflict', '有冲突');
         showConflict(wrap, {
@@ -1005,40 +1009,41 @@ async function showFile(path, line) {
             try {
               const fresh = await api('/api/files/' + encodeURI(path));
               version = fresh.version;
+              suppressChange = true;
               currentEditor.setValue(fresh.content);
-              dirty = false;
-              hideConflict(wrap);
-              setStatus(status, 'saved', '已重新加载');
+              setSaved(fresh.content);
             } catch (e) {
               setStatus(status, 'conflict', '重新加载失败');
             }
           },
           onOverwrite: () => flush(true),
         });
-      } else {
-        setStatus(status, 'conflict', '保存失败');
-        showConflict(wrap, { message: String(err.message || err) });
+        return false;
       }
-    } finally {
-      saving = false;
-      if (queued) {
-        queued = false;
-        flush(false);
-      }
+      setStatus(status, 'conflict', '保存失败');
+      showConflict(wrap, { message: String(err.message || err) });
+      return false;
     }
   };
 
+  // 所有保存串成一条链：导航前 await 它，就能保证最后一次输入也落了盘
+  const flush = (force = false) => {
+    saveChain = saveChain.then(() => doSave(force)).catch(() => false);
+    return saveChain;
+  };
+
   activeFlush = () => flush(false);
-  activeDirty = () => dirty;
+  activeDirty = () => isDirty();
 
   const scheduleSave = () => {
-
-    dirty = true;
+    if (suppressChange) {
+      suppressChange = false;
+      return;
+    }
     setStatus(status, 'dirty', '未保存');
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => flush(false), 800);
   };
-
   const assetFor = (p) =>
     '/api/asset?path=' + encodeURIComponent(p) + '&from=' + encodeURIComponent(path);
 
@@ -1066,16 +1071,18 @@ async function showFile(path, line) {
       }
     },
     onToggleTodo: async (info) => {
-      // 编辑器里点待办复选框：直接按行回写，不走整文件保存
+      // 先把正文改动落盘（否则 PATCH 之后整篇保存会把完成标记覆盖掉）
+      await flush(false);
       const res = await api('/api/todos', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, line: info.line, raw_line: info.rawLine, version, done: info.done }),
       });
       version = res.version;
-      dirty = false;
-      clearTimeout(saveTimer);
-      setStatus(status, 'saved', '已保存 ' + timeNow());
+      const fresh = await api('/api/files/' + encodeURI(path));
+      suppressChange = true;
+      currentEditor.setValue(fresh.content);
+      setSaved(fresh.content);
     },
   });
   currentEditor.focus();
@@ -1631,10 +1638,11 @@ async function route() {
   stopScheduleTicker();
   // 切换页面前先把未保存的改动落盘（PRD 5.3：保存先于跳转）
   if (activeDirty && activeDirty() && activeFlush) {
-    const flush = activeFlush;
+    const flushFn = activeFlush;
     activeFlush = null;
     activeDirty = null;
-    await flush();
+    const ok = await flushFn();
+    if (ok === false) return; // 有冲突/保存失败：留在当前页，别丢内容
   }
   const raw = location.hash.slice(1);
   if (raw.startsWith('/file/')) {

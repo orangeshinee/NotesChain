@@ -168,10 +168,10 @@ fn load_file(abs: &Path, rel: &str) -> anyhow::Result<FileEntry> {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let bytes = fs::read(abs).with_context(|| "读取文件失败")?;
-    let content = String::from_utf8(bytes)
+    let raw = String::from_utf8(bytes)
         .map_err(|_| anyhow::anyhow!("不是合法的 UTF-8（疑似 GBK 老文件），已跳过，未做任何写入"))?;
-    // Windows 编辑器常带 UTF-8 BOM；不去掉会让首个标题行与行首待办判定全部失配
-    let content = content.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(content);
+    let version = version_of_text(mtime_ms, &raw);
+    let content = canonical_text(&raw);
 
     let diary_date = detect_diary(rel, &content);
     let todos = markdown::parse_todos(&content);
@@ -181,12 +181,25 @@ fn load_file(abs: &Path, rel: &str) -> anyhow::Result<FileEntry> {
         path: rel.to_string(),
         mtime_ms,
         size: meta.len(),
-        version: version_of(mtime_ms, &content),
+        version,
         diary_date,
         content,
         todos,
         tags,
     })
+}
+
+/// 规范化文本：去 UTF-8 BOM、CRLF → LF。
+/// 版本号与解析都基于这个规范形式，保证 GET / PUT / PATCH / 索引口径一致。
+pub fn canonical_text(raw: &str) -> String {
+    let without_bom = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+    without_bom.replace("\r\n", "\n")
+}
+
+/// 基于「磁盘原始文本」的版本号：内部先规范化，调用方不需要自己做。
+pub fn version_of_text(mtime_ms: u64, raw: &str) -> String {
+    let canonical = canonical_text(raw);
+    version_of(mtime_ms, &canonical)
 }
 
 /// 版本号：mtime + 内容哈希（PRD 5.3 第 1 条）。
@@ -284,7 +297,7 @@ pub struct Ignored {
 impl Ignored {
     pub fn load(root: &Path) -> Self {
         let mut me = Ignored {
-            dirs: vec![".git".to_string()],
+            dirs: vec![".git".to_string(), ".trash".to_string()],
             suffixes: vec![".tmp".to_string(), ".swp".to_string()],
             names: Vec::new(),
             warnings: Vec::new(),
@@ -338,6 +351,16 @@ impl Ignored {
 mod tests {
     use super::*;
 
+    #[test]
+    fn canonical_version_is_stable_across_bom_and_crlf() {
+        let lf = "# 2026-11-01\n\n- [ ] a\n";
+        let crlf = "# 2026-11-01\r\n\r\n- [ ] a\r\n";
+        let bom = "\u{feff}# 2026-11-01\r\n\r\n- [ ] a\r\n";
+        let v = version_of_text(1000, lf);
+        assert_eq!(v, version_of_text(1000, crlf));
+        assert_eq!(v, version_of_text(1000, bom));
+        let _ = version_of(1000, lf);
+    }
     #[test]
     fn diary_by_path() {
         assert_eq!(diary_from_path("2026/10/2026-10-01.md").as_deref(), Some("2026-10-01"));
