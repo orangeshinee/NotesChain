@@ -8,3 +8,6 @@
 # 本地技能安装产物（不属于项目）
 .agents/
 skillhub.install.md
+
+# Playwright CLI 测试产物
+.playwright-cli/
