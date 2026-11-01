@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [string]$Screenshot = "",
@@ -188,6 +188,40 @@ try {
     } else {
       $results += "conflict => 跳过（找不到文件 $disk）"
     }
+  }
+
+  if (& $want "search") {
+    Reload-Page $ws ($Url + "#/search/" + [uri]::EscapeDataString("采购")) ([ref]$id)
+    $id++
+    $js = @'
+(async () => {
+  const li = document.querySelector('.results li');
+  if (!li) return 'no-result';
+  li.click();
+  await new Promise((r) => setTimeout(r, 1200));
+  return JSON.stringify({
+    hash: decodeURIComponent(location.hash).slice(0, 60),
+    title: document.querySelector('.doc-head .title')?.textContent || '',
+    highlighted: document.querySelectorAll('.ln-highlight').length,
+  });
+})()
+'@
+    $results += "search => " + (Eval-Js $ws $js ([ref]$id))
+  }
+
+  if (& $want "tag") {
+    Reload-Page $ws ($Url + "#/tag/" + [uri]::EscapeDataString("工作/供应链")) ([ref]$id)
+    $id++
+    $js = @'
+(async () => {
+  const right = document.querySelector('.doc-head .right')?.textContent || '';
+  const rows = document.querySelectorAll('table.todos tr[data-path]').length;
+  const notes = document.querySelectorAll('.results li').length;
+  const carets = document.querySelectorAll('.tag-node .caret').length;
+  return JSON.stringify({ right, rows, notes, carets });
+})()
+'@
+    $results += "tag => " + (Eval-Js $ws $js ([ref]$id))
   }
 
   if (& $want "resize") {
