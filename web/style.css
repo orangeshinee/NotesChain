@@ -475,3 +475,239 @@ table.todos tr.failed .text { text-decoration: line-through; color: var(--muted)
 .results .snippet { font-size: 13.5px; word-break: break-word; }
 .results .kind { font-size: 11px; color: var(--faint); margin-left: 6px; }
 .results mark { background: var(--mark); color: inherit; border-radius: 2px; }
+
+/* ================= v0.2 布局打磨（后者覆盖前者） ================= */
+
+:root {
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --radius: 8px;
+  --sidebar-w: 288px;
+  --header-h: 52px;
+}
+
+body { font-size: 14.5px; line-height: 1.66; }
+
+/* 侧边栏 */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-side);
+}
+.brand {
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
+  align-items: center;
+}
+.brand .logo {
+  font-size: 15px;
+  letter-spacing: .2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand .logo::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #ffffff));
+  display: inline-block;
+}
+.brand .git {
+  font-size: 11px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.quicknav { padding: 0 var(--sp-3) var(--sp-3); gap: 4px; flex-wrap: wrap; }
+.quick {
+  font-size: 12.5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  line-height: 1.5;
+}
+.quick:hover { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.quick:disabled { opacity: .5; cursor: default; }
+
+.searchbox { padding: 0 var(--sp-3) var(--sp-3); }
+.searchbox input {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  background: var(--bg);
+}
+.searchbox input::placeholder { color: var(--faint); }
+
+.panels { padding: 0 var(--sp-2) var(--sp-6); }
+.panel { margin-bottom: var(--sp-4); }
+.panel h2 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-side);
+  margin: 0;
+  padding: var(--sp-3) var(--sp-2) var(--sp-2);
+  font-size: 11px;
+  letter-spacing: .9px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.tree details > summary {
+  min-height: 30px;
+  padding: 4px var(--sp-2);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.tree .leaf {
+  min-height: 30px;
+  padding: 5px var(--sp-2) 5px 26px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.tree .leaf.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tree .tag-node {
+  min-height: 30px;
+  padding: 5px var(--sp-2);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.tree .tag-node .n { font-size: 11px; opacity: .8; }
+.tree .tag-node.active { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* 主区域 */
+.main { background: var(--bg); }
+.doc-head {
+  min-height: var(--header-h);
+  padding: 0 var(--sp-6);
+  align-items: center;
+  gap: var(--sp-3);
+  backdrop-filter: saturate(1.2) blur(4px);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+}
+.doc-head .title { font-size: 15px; font-weight: 600; }
+.doc-head .path { font-size: 12px; opacity: .85; }
+.doc-head .right { font-size: 12px; }
+
+.wrap { padding: var(--sp-5) var(--sp-6) 140px; max-width: 900px; }
+
+/* 首页区块 */
+.section-head {
+  margin: 0 0 var(--sp-3);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line-soft);
+}
+.section-head h2 { font-size: 11.5px; letter-spacing: .9px; }
+.schedule { margin-bottom: var(--sp-6); }
+.day {
+  padding: var(--sp-2) 0;
+  border-bottom: 1px dashed var(--line-soft);
+}
+.day.today {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border-radius: var(--radius);
+  padding: var(--sp-2) var(--sp-3);
+  margin: 0 -12px;
+  border-bottom: none;
+}
+.day-head { gap: var(--sp-2); }
+.day-head .date { font-size: 13.5px; }
+.slots li { padding: 4px 0; }
+.slots .time { min-width: 110px; font-size: 12.5px; }
+
+/* 待办表 */
+table.todos { font-size: 13.5px; table-layout: fixed; }
+table.todos thead th {
+  top: var(--header-h);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+}
+table.todos td {
+  padding: 9px var(--sp-3);
+  line-height: 1.55;
+  border-bottom: 1px solid var(--line-soft);
+}
+table.todos th:nth-child(1), table.todos td:nth-child(1) { width: 38px; }
+table.todos th:nth-child(3), table.todos td:nth-child(3) { width: 34%; }
+table.todos th:nth-child(4), table.todos td:nth-child(4) { width: 22%; }
+table.todos tbody tr:last-child td { border-bottom: none; }
+table.todos .file { font-size: 12px; }
+table.todos td .tag { cursor: pointer; }
+.no-tag { opacity: .6; }
+
+/* 搜索结果 / 历史 */
+.results li { padding: var(--sp-3); border-radius: var(--radius); }
+.results .meta { font-size: 11.5px; }
+.results .snippet { font-size: 13.5px; line-height: 1.6; }
+.history-list li { padding: var(--sp-3); border-radius: var(--radius); }
+
+pre.patch { font-size: 12.5px; line-height: 1.62; }
+
+/* 空态 */
+.empty-state {
+  padding: var(--sp-6) var(--sp-2);
+  color: var(--muted);
+  font-size: 13.5px;
+  text-align: center;
+}
+
+/* 窄屏 */
+.sidebar-toggle {
+  display: none;
+  position: fixed;
+  left: 12px;
+  bottom: 16px;
+  z-index: 30;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .16);
+  font-size: 17px;
+  cursor: pointer;
+}
+.backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .35);
+  z-index: 20;
+}
+@media (max-width: 860px) {
+  .sidebar-toggle { display: block; }
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 25;
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+    box-shadow: 0 0 40px rgba(0, 0, 0, .25);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .backdrop.show { display: block; }
+  .doc-head { padding: 0 var(--sp-4); }
+  .wrap { padding: var(--sp-4) var(--sp-4) 120px; }
+  table.todos th:nth-child(3), table.todos td:nth-child(3) { width: 40%; }
+  table.todos th:nth-child(4), table.todos td:nth-child(4) { display: none; }
+}

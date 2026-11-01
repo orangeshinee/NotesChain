@@ -1183,6 +1183,36 @@ if (refreshBtn) {
   });
 }
 
+// 窄屏侧边栏抽屉
+const sidebarToggle = document.getElementById('sidebar-toggle');
+const backdrop = document.getElementById('backdrop');
+const sidebar = document.querySelector('.sidebar');
+
+function closeSidebar() {
+  if (sidebar) sidebar.classList.remove('open');
+  if (backdrop) backdrop.classList.remove('show');
+  if (sidebarToggle) sidebarToggle.setAttribute('aria-expanded', 'false');
+}
+
+if (sidebarToggle) {
+  sidebarToggle.addEventListener('click', () => {
+    const open = sidebar.classList.toggle('open');
+    backdrop.classList.toggle('show', open);
+    sidebarToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+}
+if (backdrop) backdrop.addEventListener('click', closeSidebar);
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeSidebar();
+});
+// 点了导航就收起抽屉（窄屏下）
+document.addEventListener('click', (event) => {
+  if (window.innerWidth > 860) return;
+  const target = event.target;
+  if (target && (target.closest('.tree .leaf') || target.closest('.tag-node') || target.closest('.quick'))) {
+    closeSidebar();
+  }
+});
 async function boot() {
   try {
     const cfg = await api('/api/config').catch(() => null);
