@@ -3,6 +3,7 @@
 //! 竖切版本（v0.1）：扫描 → 待办提取 → 首页勾选 → 三级定位回写。
 
 mod api;
+mod git;
 mod index;
 mod markdown;
 mod state;

@@ -232,6 +232,7 @@ async fn save_file(
     }
 
     todo_write::atomic_write(&abs, &body.content).map_err(ApiError::internal)?;
+    st.git.notify();
     st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
 
     let mtime = mtime_ms(&abs);
@@ -290,6 +291,7 @@ async fn patch_todo(
     }
 
     todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
+    st.git.notify();
     st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
 
     let mtime = mtime_ms(&abs);
@@ -326,6 +328,7 @@ async fn ensure_daily(State(st): State<Arc<AppState>>) -> Result<Json<Value>, Ap
         std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
     }
     todo_write::atomic_write(&abs, &content).map_err(ApiError::internal)?;
+    st.git.notify();
     st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
 
     Ok(Json(json!({
@@ -343,54 +346,8 @@ async fn rebuild_index(State(st): State<Arc<AppState>>) -> Result<Json<Value>, A
 }
 
 async fn git_status(State(st): State<Arc<AppState>>) -> Json<Value> {
-    let root = st.root.clone();
-    let result = tokio::task::spawn_blocking(move || probe_git(&root)).await;
-    Json(match result {
-        Ok(value) => value,
-        Err(err) => json!({ "available": false, "reason": format!("检测失败: {err}") }),
-    })
-}
-
-fn probe_git(root: &std::path::Path) -> Value {
-    let version = std::process::Command::new("git").arg("--version").output();
-    let Ok(version) = version else {
-        return json!({ "available": false, "reason": "未检测到 git，版本历史未启用" });
-    };
-    if !version.status.success() {
-        return json!({ "available": false, "reason": "未检测到 git，版本历史未启用" });
-    }
-
-    let inside = std::process::Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .current_dir(root)
-        .output();
-    let is_repo = inside.map(|o| o.status.success()).unwrap_or(false);
-
-    let last = std::process::Command::new("git")
-        .args(["log", "-1", "--format=%cI"])
-        .current_dir(root)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty());
-
-    let pending = std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(root)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
-        .unwrap_or(0);
-
-    json!({
-        "available": true,
-        "is_repo": is_repo,
-        "last_commit": last,
-        "pending_files": pending,
-        "note": "仅本地版本历史，无远程备份",
-    })
+    let status = st.git.status().await;
+    Json(serde_json::to_value(status).unwrap_or_else(|_| json!({ "available": false })))
 }
 
 // ---------------------------------------------------------------- 标签树

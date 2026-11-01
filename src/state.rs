@@ -8,6 +8,7 @@ use anyhow::Context;
 use rand::RngCore;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::git::Git;
 use crate::index::Index;
 
 pub struct AppState {
@@ -16,6 +17,8 @@ pub struct AppState {
     /// 本次进程的启动 token（不落盘，PRD 9.1）
     pub token: String,
     pub index: RwLock<Index>,
+    /// Git 自动提交调度
+    pub git: Arc<Git>,
     /// 按文件串行化写入（PRD 5.3 第 7 条）
     file_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
@@ -25,13 +28,18 @@ impl AppState {
         let root = root
             .canonicalize()
             .with_context(|| format!("笔记目录不可访问: {}", root.display()))?;
+        // Windows 的 canonicalize 会返回 `\\?\F:\...` 扩展路径，git 不认这种路径，
+        // 显示出来也难看；这里统一去掉前缀。
+        let root = simplify(root);
         if !root.is_dir() {
             anyhow::bail!("笔记目录不是目录: {}", root.display());
         }
+        let git = Git::start(root.clone());
         Ok(Arc::new(AppState {
             root,
             token: new_token(),
             index: RwLock::new(Index::default()),
+            git,
             file_locks: Mutex::new(HashMap::new()),
         }))
     }
@@ -81,6 +89,7 @@ impl AppState {
             };
             parent.join(joined.file_name().context("路径缺少文件名")?)
         };
+        let resolved = simplify(resolved);
         if !resolved.starts_with(&self.root) {
             anyhow::bail!("路径越界");
         }
@@ -98,6 +107,14 @@ impl AppState {
     }
 }
 
+/// 去掉 Windows 扩展长度路径前缀 `\\?\`。
+fn simplify(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy().to_string();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path,
+    }
+}
 fn new_token() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
