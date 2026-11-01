@@ -85,6 +85,9 @@ cargo clippy --all-targets
 # 3) 端到端冒烟（18 项，会在 .demo\smoke-notes 造语料）
 pwsh -File tools\smoke.ps1
 
+# 2.5) 真实目录只读体检（不建仓库、不改文件）
+pwsh -File tools\verify-real-dir.ps1 -Path "D:\notes" -Out .\体检报告.md
+
 # 3.5) 真实浏览器交互（悬停预览、点击待办）——需要先起服务并把带 token 的地址传进去
 # pwsh -File tools\browser-probe.ps1 -Url "http://127.0.0.1:8080/?token=..." -Hash "#/file/2026/11/2026-11-01.md"
 
