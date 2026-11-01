@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "clicks", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "clicks", "tagtoggle", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [int]$DebugPort = 9333
@@ -219,6 +219,26 @@ try {
 })()
 '@
     $results += "tag => " + (Eval-Js $ws $js )
+  }
+
+  if (& $want "tagtoggle") {
+    Reload-Page $ws ($Url + "#/")
+    $js = @'
+(async () => {
+  const rows = Array.from(document.querySelectorAll('.tag-node'));
+  const row = rows.find((r) => r.nextElementSibling && r.nextElementSibling.classList.contains('tag-children'));
+  if (!row) return 'no-expandable-tag';
+  const sub = row.nextElementSibling;
+  const before = sub.hidden;
+  row.click();
+  await new Promise((r) => setTimeout(r, 300));
+  const after = sub.hidden;
+  row.click();
+  await new Promise((r) => setTimeout(r, 300));
+  return JSON.stringify({ before, afterFirstClick: after, afterSecondClick: sub.hidden });
+})()
+'@
+    $results += "tagtoggle => " + (Eval-Js $ws $js)
   }
 
   if (& $want "preview") {

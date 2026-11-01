@@ -1544,9 +1544,15 @@ function renderTagTree(nodes) {
 
       row.append(caret);
       const nameSpan = el('span', 'tag-name', node.name);
-      nameSpan.title = '点击查看 #' + node.path;
-      nameSpan.addEventListener('click', (event) => { event.stopPropagation(); go('/tag/' + encodeURIComponent(node.path)); });
+      nameSpan.title = '#' + node.path;
       row.append(nameSpan);
+      const openBtn = el('span', 'tag-open', '查看');
+      openBtn.title = '查看 #' + node.path;
+      openBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        go('/tag/' + encodeURIComponent(node.path));
+      });
+      row.append(openBtn);
       row.append(el('span', 'n', `${node.notes} 篇 / ${node.todos} 待办`));
       row.addEventListener('click', () => { const sub = row.nextElementSibling; if (!hasChildren || !sub) { go('/tag/' + encodeURIComponent(node.path)); return; } if (state.expandedTags.has(node.path)) state.expandedTags.delete(node.path); else state.expandedTags.add(node.path); sub.hidden = !state.expandedTags.has(node.path); caret.classList.toggle('open', !sub.hidden); });
       container.append(row);

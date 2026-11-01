@@ -1120,3 +1120,14 @@ body.wide .wrap { max-width: none; }
 .tree .leaf .n { margin-left: auto; }
 button.seg.danger { color: #b42318; }
 button.seg.danger:hover { border-color: #b42318; }
+
+/* 标签行：「查看」按钮（点击行是展开/收起，查看才跳转） */
+.tag-node .tag-open {
+  font-size: 11px;
+  color: var(--accent);
+  margin-left: 8px;
+  flex: none;
+  opacity: .7;
+}
+.tag-node:hover .tag-open { opacity: 1; text-decoration: underline; }
+.tag-node .n { margin-left: auto; }
