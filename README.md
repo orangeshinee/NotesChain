@@ -4,6 +4,10 @@
 
 需求文档：[docs/noteschain-prd-v05.md](docs/noteschain-prd-v05.md)（v0.4 存档于 [docs/archive/](docs/archive/)）。
 
+接手开发先读 [docs/handover.md](docs/handover.md)：代码地图、实现约束、验证体系。
+
+一条命令验证全部：`pwsh -File tools/release-gate.ps1`
+
 ## 当前状态
 
 已跑通的链路：**扫描 → 日程/待办/标签 → 首页 → 编辑器保存 → Git 队列**。
