@@ -111,7 +111,7 @@ impl AppState {
 }
 
 /// 去掉 Windows 扩展长度路径前缀 `\\?\`。
-fn simplify(path: PathBuf) -> PathBuf {
+pub(crate) fn simplify(path: PathBuf) -> PathBuf {
     let text = path.to_string_lossy().to_string();
     match text.strip_prefix(r"\\?\") {
         Some(rest) => PathBuf::from(rest),

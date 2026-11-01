@@ -1,5 +1,15 @@
-// NotesChain 编辑器：CodeMirror 6 + Markdown，Live Preview L1（隐藏非光标行的语法符号）
-import { EditorView, keymap, drawSelection, highlightActiveLine, ViewPlugin, Decoration } from '@codemirror/view';
+// NotesChain 编辑器：CodeMirror 6 + Markdown
+// L1 Live Preview：非光标行隐藏语法符号
+// 额外：待办行渲染为可点复选框；图片行内预览（失败显示占位）
+import {
+  EditorView,
+  keymap,
+  drawSelection,
+  highlightActiveLine,
+  ViewPlugin,
+  Decoration,
+  WidgetType,
+} from '@codemirror/view';
 import { EditorState, RangeSetBuilder } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -25,7 +35,7 @@ const highlight = HighlightStyle.define([
 
 const theme = EditorView.theme({
   '&': { color: 'var(--fg)', backgroundColor: 'transparent', fontSize: '14.5px' },
-  '.cm-content': { fontFamily: 'inherit', padding: '4px 0', lineHeight: '1.72', caretColor: 'var(--accent)' },
+  '.cm-content': { fontFamily: 'inherit', padding: '4px 0', lineHeight: '1.78', caretColor: 'var(--accent)' },
   '.cm-scroller': { fontFamily: 'inherit', overflow: 'auto' },
   '.cm-line': { padding: '0 2px' },
   '&.cm-focused': { outline: 'none' },
@@ -34,54 +44,177 @@ const theme = EditorView.theme({
   '.cm-cursor': { borderLeftColor: 'var(--accent)' },
 });
 
-// 光标不在的行，把 Markdown 语法符号（#、**、`、- 等）淡出
 const markHide = Decoration.mark({ class: 'cm-syntax-mark' });
 
-const livePreview = ViewPlugin.fromClass(
-  class {
+function pad(n) {
+  return String(n).padStart(2, '0');
+}
+
+function nowStamp() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 待办复选框 */
+class CheckboxWidget extends WidgetType {
+  constructor(checked, pos) {
+    super();
+    this.checked = checked;
+    this.pos = pos;
+  }
+  eq(other) {
+    return other.checked === this.checked && other.pos === this.pos;
+  }
+  toDOM(view) {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'cm-todo-box';
+    box.checked = this.checked;
+    box.defaultChecked = this.checked;
+    box.addEventListener('mousedown', (e) => e.preventDefault());
+    box.addEventListener('click', async (e) => {
+      e.preventDefault();
+      await toggleTask(view, this.pos);
+    });
+    return box;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+/** 图片预览 */
+class ImageWidget extends WidgetType {
+  constructor(alt, url) {
+    super();
+    this.alt = alt || '';
+    this.url = url;
+  }
+  eq(other) {
+    return other.url === this.url && other.alt === this.alt;
+  }
+  toDOM() {
+    const wrap = document.createElement('span');
+    wrap.className = 'cm-img';
+    const img = document.createElement('img');
+    img.src = this.url;
+    img.alt = this.alt;
+    img.loading = 'lazy';
+    img.addEventListener('error', () => {
+      wrap.classList.add('broken');
+      wrap.textContent = '🖼 ' + (this.alt || this.url.replace(/^.*\//, ''));
+    });
+    wrap.append(img);
+    return wrap;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+async function toggleTask(view, pos) {
+  const line = view.state.doc.lineAt(pos);
+  const match = /^(\s*)- \[([ xX])\]\s?(.*)$/.exec(line.text);
+  if (!match) return;
+  const done = match[2].toLowerCase() === 'x';
+  let rest = match[3] || '';
+  const markerAt = rest.indexOf('✅');
+  if (done && markerAt >= 0) rest = rest.slice(0, markerAt).trimEnd();
+
+  const rawLine = `${match[1]}- [${match[2]}] ${rest}`.trimEnd();
+  const nextText = done ? `${match[1]}- [ ] ${rest}` : `${match[1]}- [x] ${rest} ✅ ${nowStamp()}`;
+  const before = line.text;
+
+  view.dispatch({ changes: { from: line.from, to: line.to, insert: nextText } });
+
+  if (view.__ncOnToggle) {
+    try {
+      await view.__ncOnToggle({ line: line.number, rawLine, done: !done });
+    } catch (err) {
+      // 失败回滚
+      const cur = view.state.doc.line(line.number);
+      view.dispatch({ changes: { from: cur.from, to: cur.to, insert: before } });
+    }
+  }
+}
+
+function buildDecorations(view, assetFor) {
+  const builder = new RangeSetBuilder();
+  const activeLines = new Set();
+  for (const range of view.state.selection.ranges) {
+    const first = view.state.doc.lineAt(range.from).number;
+    const last = view.state.doc.lineAt(range.to).number;
+    for (let n = first; n <= last; n++) activeLines.add(n);
+  }
+
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from;
+    while (pos <= to) {
+      const line = view.state.doc.lineAt(pos);
+      if (!activeLines.has(line.number)) {
+        const text = line.text;
+
+        // 待办复选框：替换 `- [ ]` 标记
+        const task = /^(\s*)- \[([ xX])\]\s?/.exec(text);
+        if (task) {
+          builder.add(
+            line.from,
+            line.from + task[0].length,
+            Decoration.replace({
+              widget: new CheckboxWidget(task[2].toLowerCase() === 'x', line.from + task[1].length),
+            })
+          );
+          // 已完成行的 ✅ 时间戳淡出
+          const marker = text.indexOf('✅');
+          if (marker >= 0) {
+            builder.add(line.from + marker, line.to, markHide);
+          }
+        }
+
+        // 图片 → 行内预览
+        for (const m of text.matchAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g)) {
+          const start = line.from + m.index;
+          builder.add(
+            start,
+            start + m[0].length,
+            Decoration.replace({ widget: new ImageWidget(m[1], assetFor(m[2])) })
+          );
+        }
+
+        // 其余语法符号淡出
+        for (const m of text.matchAll(/(\*\*|__|\*|_|`+|~~|^#{1,6}\s)/g)) {
+          const start = line.from + m.index;
+          builder.add(start, start + m[0].length, markHide);
+        }
+      }
+      pos = line.to + 1;
+      if (line.to >= to) break;
+    }
+  }
+  return builder.finish();
+}
+
+function livePreviewExtension(assetFor, onToggleTodo) {
+  class LivePreviewPlugin {
     constructor(view) {
-      this.decorations = this.build(view);
+      this.view = view;
+      view.__ncOnToggle = onToggleTodo || null;
+      this.decorations = buildDecorations(view, assetFor);
     }
     update(update) {
       if (update.docChanged || update.viewportChanged || update.selectionSet) {
-        this.decorations = this.build(update.view);
+        this.decorations = buildDecorations(update.view, assetFor);
       }
     }
-    build(view) {
-      const builder = new RangeSetBuilder();
-      const activeLines = new Set();
-      for (const range of view.state.selection.ranges) {
-        const first = view.state.doc.lineAt(range.from).number;
-        const last = view.state.doc.lineAt(range.to).number;
-        for (let n = first; n <= last; n++) activeLines.add(n);
-      }
-      for (const { from, to } of view.visibleRanges) {
-        let pos = from;
-        while (pos <= to) {
-          const line = view.state.doc.lineAt(pos);
-          if (!activeLines.has(line.number)) {
-            const text = line.text;
-            for (const m of text.matchAll(/(\*\*|__|\*|_|`+|~~|^#{1,6}\s|^[-*+]\s|^\d+\.\s)/g)) {
-              const start = line.from + m.index;
-              builder.add(start, start + m[0].length, markHide);
-            }
-          }
-          pos = line.to + 1;
-          if (line.to >= to) break;
-        }
-      }
-      return builder.finish();
-    }
-  },
-  { decorations: (v) => v.decorations }
-);
+  }
+  return ViewPlugin.fromClass(LivePreviewPlugin, { decorations: (v) => v.decorations });
+}
 
 /**
- * 挂载编辑器。
- * @param {{parent: HTMLElement, doc: string, onChange?: (v:string)=>void, onSave?: ()=>void}} opts
+ * @param {{parent: HTMLElement, doc: string, onChange?: Function, onSave?: Function, onToggleTodo?: Function, assetFor?: (path:string)=>string}} opts
  */
 export function create(opts) {
-  const { parent, doc, onChange, onSave } = opts;
+  const { parent, doc, onChange, onSave, onToggleTodo, assetFor } = opts;
   const view = new EditorView({
     parent,
     state: EditorState.create({
@@ -93,7 +226,7 @@ export function create(opts) {
         EditorView.lineWrapping,
         markdown({ base: markdownLanguage, addKeymap: true }),
         syntaxHighlighting(highlight),
-        livePreview,
+        livePreviewExtension(assetFor || ((p) => p), onToggleTodo),
         theme,
         keymap.of([
           {
@@ -114,6 +247,7 @@ export function create(opts) {
       ],
     }),
   });
+
 
   return {
     view,

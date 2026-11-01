@@ -1,6 +1,7 @@
 //! HTTP 接口层：token 鉴权、文件读写、待办汇总与回写。
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Path as AxumPath, Query, Request, State};
@@ -31,6 +32,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/search", get(search))
         .route("/api/schedule", get(schedule_view))
         .route("/api/revision", get(revision))
+        .route("/api/asset", get(asset))
         .route("/api/daily", post(ensure_daily))
         .route("/api/index/rebuild", post(rebuild_index))
         .route("/api/git/status", get(git_status))
@@ -651,6 +653,97 @@ fn snippet(line: &str) -> String {
     }
 }
 
+// ---------------------------------------------------------------- 静态资源（图片 / 附件）
+
+#[derive(Deserialize)]
+struct AssetParams {
+    /// 笔记里写的引用路径，如 `../../assets/a.png` 或 `assets/a.png`
+    path: String,
+    /// 引用所在的文件（notes 根相对路径），用于双轨解析的第一轨
+    #[serde(default)]
+    from: Option<String>,
+}
+
+async fn asset(
+    State(st): State<Arc<AppState>>,
+    Query(p): Query<AssetParams>,
+) -> Result<Response, ApiError> {
+    let raw = p.path.trim();
+    if raw.is_empty()
+        || raw.starts_with("http://")
+        || raw.starts_with("https://")
+        || raw.starts_with("data:")
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_path",
+            "不支持的资源路径",
+        ));
+    }
+
+    // 双轨：先按文件自身相对位置，再按 notes 根
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(from) = &p.from {
+        if let Ok(abs) = st.resolve(from) {
+            if let Some(dir) = abs.parent() {
+                candidates.push(join_normalized(dir, raw));
+            }
+        }
+    }
+    candidates.push(join_normalized(&st.root, raw));
+
+    for candidate in candidates {
+        let candidate = crate::state::simplify(candidate);
+        if !candidate.starts_with(&st.root) || !candidate.is_file() {
+            continue;
+        }
+        if candidate.components().any(|c| c.as_os_str() == ".git") {
+            continue;
+        }
+        return serve_bytes(&candidate);
+    }
+
+    Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "资源不存在"))
+}
+
+fn join_normalized(base: &std::path::Path, rel: &str) -> PathBuf {
+    let mut out = PathBuf::from(base);
+    for seg in rel.replace('\\', "/").split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn serve_bytes(path: &std::path::Path) -> Result<Response, ApiError> {
+    let bytes = std::fs::read(path).map_err(ApiError::internal)?;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    };
+    Response::builder()
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(axum::body::Body::from(bytes))
+        .map_err(ApiError::internal)
+}
 fn mtime_ms(path: &std::path::Path) -> u64 {
     std::fs::metadata(path)
         .and_then(|m| m.modified())

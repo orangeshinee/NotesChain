@@ -253,6 +253,30 @@ body {
 @media (prefers-color-scheme: dark) {
   .conflict-bar { background: #2b1d1b; border-color: #5c3330; color: #e0a79e; }
 }
+/* 编辑器内：待办复选框 / 图片预览 */
+.cm-todo-box {
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 0;
+  vertical-align: -1px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.cm-img { display: inline-block; vertical-align: middle; }
+.cm-img img {
+  max-height: 240px;
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--line-soft);
+  vertical-align: middle;
+}
+.cm-img.broken {
+  font-size: 12.5px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  padding: 2px 8px;
+}
 /* ---------------- 首页：日程 ---------------- */
 .section-head {
   display: flex;

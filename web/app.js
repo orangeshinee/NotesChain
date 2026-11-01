@@ -532,17 +532,38 @@ async function showFile(path, line) {
     saveTimer = setTimeout(() => flush(false), 800);
   };
 
-  currentEditor = makeEditor(host, data.content, scheduleSave, () => {
-    clearTimeout(saveTimer);
-    flush(false);
-  });
+  const assetFor = (p) =>
+    '/api/asset?path=' + encodeURIComponent(p) + '&from=' + encodeURIComponent(path);
+
+  currentEditor = makeEditor(
+    host,
+    data.content,
+    scheduleSave,
+    () => {
+      clearTimeout(saveTimer);
+      flush(false);
+    },
+    assetFor,
+    async (info) => {
+      // 编辑器里点待办复选框：直接按行回写，不走整文件保存
+      const res = await api('/api/todos', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, line: info.line, raw_line: info.rawLine, version, done: info.done }),
+      });
+      version = res.version;
+      dirty = false;
+      clearTimeout(saveTimer);
+      setStatus(status, 'saved', '已保存 ' + timeNow());
+    }
+  );
   currentEditor.focus();
   if (line) scrollToLine(line);
 }
 
-function makeEditor(host, content, onChange, onSave) {
+function makeEditor(host, content, onChange, onSave, assetFor, onToggleTodo) {
   if (window.NotesChainEditor && typeof window.NotesChainEditor.create === 'function') {
-    return window.NotesChainEditor.create({ parent: host, doc: content, onChange, onSave });
+    return window.NotesChainEditor.create({ parent: host, doc: content, onChange, onSave, assetFor, onToggleTodo });
   }
   const area = document.createElement('textarea');
   area.className = 'editor-fallback';
