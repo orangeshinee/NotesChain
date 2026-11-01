@@ -49,6 +49,17 @@ pwsh -File tools/release-gate.ps1
 
 一条命令跑完构建、单元测试、clippy、接口冒烟、边界场景、平替预演与浏览器交互，全绿再提交。
 
+## 发布
+
+推送 `v*` tag 会自动构建并发布到 GitHub Releases：
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+产物：`noteschain-v0.1.0-windows-x64.zip`（exe + README）、同名 `.sha256` 校验文件，以及未打包的 `noteschain.exe`。push / PR 会自动跑 CI（release 构建 + 单元测试 + clippy 零警告）。
+
 ## 文档
 
 | 文档 | 内容 |

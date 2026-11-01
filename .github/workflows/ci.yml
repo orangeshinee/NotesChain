@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: 构建 + 测试 + clippy
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 构建（release）
+        run: cargo build --release --locked
+
+      - name: 单元测试
+        run: cargo test --locked
+
+      - name: clippy（零警告）
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: 二进制可用性
+        shell: pwsh
+        run: |
+          ./target/release/noteschain.exe --version
+          ./target/release/noteschain.exe --help | Out-Null

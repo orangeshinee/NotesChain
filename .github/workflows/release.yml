@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的 tag（例如 v0.1.0）。tag 需先推到远端。"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-x64:
+    name: 打包并发布 Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rust 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 构建（release）
+        run: cargo build --release --locked
+
+      - name: 冒烟（--version / --help）
+        shell: pwsh
+        run: |
+          ./target/release/noteschain.exe --version
+          ./target/release/noteschain.exe --help | Out-Null
+
+      - name: 打包
+        id: pack
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
+          $name = "noteschain-$tag-windows-x64"
+
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/noteschain.exe dist/
+          Copy-Item README.md dist/
+
+          Compress-Archive -Path dist/* -DestinationPath "$name.zip" -Force
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Set-Content "$name.zip.sha256" -Encoding utf8
+
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "zip=$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: 发布到 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.pack.outputs.tag }}"
+          $zip = "${{ steps.pack.outputs.zip }}"
+          $assets = @($zip, "$zip.sha256", "target/release/noteschain.exe")
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # tag 已发过 release：覆盖资产，允许从手动重跑补传
+            gh release upload $tag @assets --clobber
+          } else {
+            gh release create $tag --verify-tag --title "NotesChain $tag" --generate-notes @assets
+          }
+
+          gh release view $tag --json url --jq .url
