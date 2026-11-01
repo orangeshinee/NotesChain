@@ -10,6 +10,11 @@ const state = {
   leafEls: new Map(),
 };
 
+let currentEditor = null;
+let saveTimer = null;
+let activeFlush = null;
+let activeDirty = null;
+
 const main = document.getElementById('main');
 const fileTree = document.getElementById('file-tree');
 const tagTree = document.getElementById('tag-tree');
@@ -31,7 +36,12 @@ function esc(s) {
 async function api(path, opts) {
   const resp = await fetch(path, opts);
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error((data && data.error && data.error.message) || `${resp.status} ${resp.statusText}`);
+  if (!resp.ok) {
+    const err = new Error((data && data.error && data.error.message) || `${resp.status} ${resp.statusText}`);
+    err.code = data && data.error && data.error.code;
+    err.status = resp.status;
+    throw err;
+  }
   return data;
 }
 
@@ -450,19 +460,154 @@ async function showFile(path, line) {
   state.activePath = path;
   state.activeTag = null;
   markActive();
+  teardownEditor();
   main.replaceChildren(loadingState('打开 ' + path + ' …'));
+
+  let data;
   try {
-    const data = await api('/api/files/' + encodeURI(path));
-    const wrap = el('div', 'wrap');
-    const article = el('article', 'doc');
-    article.innerHTML = renderMarkdown(data.content);
-    wrap.append(article);
-    const name = path.split('/').pop();
-    main.replaceChildren(docHead(name, '', path), wrap);
-    if (line) scrollToLine(line);
+    data = await api('/api/files/' + encodeURI(path));
   } catch (err) {
     main.replaceChildren(docHead(path.split('/').pop(), '', path), errorState(err));
+    return;
   }
+
+  let version = data.version;
+  let dirty = false;
+
+  const name = path.split('/').pop();
+  const head = docHead(name, '', path);
+  const status = el('span', 'status saved', '已保存');
+  head.append(status);
+  const wrap = el('div', 'wrap');
+  const host = el('div', 'editor-host');
+  wrap.append(host);
+  main.replaceChildren(head, wrap);
+
+  const flush = async (force = false) => {
+    if (!currentEditor || !dirty) return;
+    const content = currentEditor.getValue();
+    setStatus(status, 'saving', '保存中…');
+    try {
+      const res = await api('/api/files/' + encodeURI(path) + (force ? '?force=true' : ''), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, version }),
+      });
+      version = res.version;
+      dirty = false;
+      setStatus(status, 'saved', '已保存 ' + timeNow());
+      hideConflict(wrap);
+    } catch (err) {
+      if (err.code === 'conflict') {
+        setStatus(status, 'conflict', '有冲突');
+        showConflict(wrap, {
+          onReload: async () => {
+            try {
+              const fresh = await api('/api/files/' + encodeURI(path));
+              version = fresh.version;
+              currentEditor.setValue(fresh.content);
+              dirty = false;
+              hideConflict(wrap);
+              setStatus(status, 'saved', '已重新加载');
+            } catch (e) {
+              setStatus(status, 'conflict', '重新加载失败');
+            }
+          },
+          onOverwrite: () => flush(true),
+        });
+      } else {
+        setStatus(status, 'conflict', '保存失败');
+        showConflict(wrap, { message: String(err.message || err) });
+      }
+    }
+  };
+
+  activeFlush = () => flush(false);
+  activeDirty = () => dirty;
+
+  const scheduleSave = () => {
+    dirty = true;
+    setStatus(status, 'dirty', '未保存');
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => flush(false), 800);
+  };
+
+  currentEditor = makeEditor(host, data.content, scheduleSave, () => {
+    clearTimeout(saveTimer);
+    flush(false);
+  });
+  currentEditor.focus();
+  if (line) scrollToLine(line);
+}
+
+function makeEditor(host, content, onChange, onSave) {
+  if (window.NotesChainEditor && typeof window.NotesChainEditor.create === 'function') {
+    return window.NotesChainEditor.create({ parent: host, doc: content, onChange, onSave });
+  }
+  const area = document.createElement('textarea');
+  area.className = 'editor-fallback';
+  area.value = content;
+  area.spellcheck = false;
+  area.addEventListener('input', () => onChange(area.value));
+  area.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      onSave();
+    }
+  });
+  host.append(area);
+  return {
+    getValue: () => area.value,
+    setValue: (text) => {
+      area.value = text;
+    },
+    focus: () => area.focus(),
+    destroy: () => area.remove(),
+  };
+}
+
+function teardownEditor() {
+  clearTimeout(saveTimer);
+  if (currentEditor) {
+    try {
+      currentEditor.destroy();
+    } catch (err) {
+      /* ignore */
+    }
+    currentEditor = null;
+  }
+}
+
+function setStatus(node, cls, text) {
+  node.className = 'status ' + cls;
+  node.textContent = text;
+}
+
+function timeNow() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function showConflict(wrap, handlers) {
+  hideConflict(wrap);
+  const bar = el('div', 'conflict-bar');
+  bar.append(el('span', '', handlers.message || '文件已被外部修改，请选择处理方式：'));
+  if (handlers.onReload) {
+    const reload = el('button', 'seg', '重新加载');
+    reload.addEventListener('click', handlers.onReload);
+    bar.append(reload);
+  }
+  if (handlers.onOverwrite) {
+    const overwrite = el('button', 'seg active', '强制覆盖');
+    overwrite.addEventListener('click', handlers.onOverwrite);
+    bar.append(overwrite);
+  }
+  wrap.prepend(bar);
+}
+
+function hideConflict(wrap) {
+  const existing = wrap.querySelector('.conflict-bar');
+  if (existing) existing.remove();
 }
 
 function scrollToLine(line) {
@@ -681,6 +826,13 @@ function setGit(git) {
 // ---------------------------------------------------------------- 路由
 
 async function route() {
+  // 切换页面前先把未保存的改动落盘（PRD 5.3：保存先于跳转）
+  if (activeDirty && activeDirty() && activeFlush) {
+    const flush = activeFlush;
+    activeFlush = null;
+    activeDirty = null;
+    await flush();
+  }
   const raw = location.hash.slice(1);
   if (raw.startsWith('/file/')) {
     const rest = decodeURIComponent(raw.slice(6));

@@ -20,6 +20,7 @@ const DAILY_TEMPLATE: &str = include_str!("../docs/templates/daily-note.md");
 const INDEX_HTML: &str = include_str!("../web/index.html");
 const APP_JS: &str = include_str!("../web/app.js");
 const STYLE_CSS: &str = include_str!("../web/style.css");
+const EDITOR_JS: &str = include_str!("../web/dist/editor.js");
 
 pub fn router(state: Arc<AppState>) -> Router {
     let protected = Router::new()
@@ -34,6 +35,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/git/status", get(git_status))
         .route("/app.js", get(app_js))
         .route("/style.css", get(style_css))
+        .route("/editor.js", get(editor_js))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth));
 
     Router::new()
@@ -51,6 +53,13 @@ async fn app_js() -> impl IntoResponse {
 
 async fn style_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], STYLE_CSS)
+}
+
+async fn editor_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        EDITOR_JS,
+    )
 }
 
 // ---------------------------------------------------------------- 错误与鉴权
@@ -212,9 +221,16 @@ struct SaveRequest {
     version: String,
 }
 
+#[derive(Deserialize)]
+struct ForceQuery {
+    #[serde(default)]
+    force: Option<bool>,
+}
+
 async fn save_file(
     State(st): State<Arc<AppState>>,
     AxumPath(path): AxumPath<String>,
+    Query(q): Query<ForceQuery>,
     Json(body): Json<SaveRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let abs = st.resolve(&path).map_err(ApiError::bad_path)?;
@@ -224,7 +240,7 @@ async fn save_file(
 
     let current = std::fs::read_to_string(&abs).unwrap_or_default();
     let current_version = crate::index::version_of(mtime_ms(&abs), &current);
-    if current_version != body.version {
+    if current_version != body.version && !q.force.unwrap_or(false) {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "conflict",

@@ -218,6 +218,41 @@ body {
 .doc .link-ph { color: var(--accent); border-bottom: 1px solid var(--line); }
 .doc .ln-highlight { background: var(--mark); border-radius: 3px; }
 
+/* ---------------- 编辑器 ---------------- */
+.editor-host { min-height: 60vh; }
+.editor-host .cm-editor { outline: none; }
+.cm-syntax-mark { opacity: 0; }
+.cm-syntax-mark.cm-activeLine .cm-syntax-mark { opacity: 1; }
+.editor-fallback {
+  width: 100%;
+  min-height: 60vh;
+  border: none;
+  outline: none;
+  resize: vertical;
+  background: transparent;
+  color: var(--fg);
+  font: 14.5px/1.72 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.status { margin-left: auto; font-size: 12px; color: var(--faint); }
+.status.dirty { color: #b06a00; }
+.status.saving { color: var(--muted); }
+.status.saved { color: var(--accent); }
+.status.conflict { color: #b42318; }
+.conflict-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border: 1px solid #e0b4ae;
+  background: #fdf1ef;
+  color: #7a2e24;
+  border-radius: 7px;
+  font-size: 13px;
+}
+@media (prefers-color-scheme: dark) {
+  .conflict-bar { background: #2b1d1b; border-color: #5c3330; color: #e0a79e; }
+}
 /* ---------------- 首页：日程 ---------------- */
 .section-head {
   display: flex;
