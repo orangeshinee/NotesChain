@@ -6,6 +6,7 @@ param(
   [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
+  [string]$Screenshot = "",
   [int]$DebugPort = 9333
 )
 
@@ -55,6 +56,12 @@ function Eval-Js($ws, $expression, [ref]$id) {
   return $null
 }
 
+# 每个场景前重新加载页面，避免上一个场景的状态干扰
+function Reload-Page($ws, $url, [ref]$id) {
+  $id.Value++
+  Send-Cdp $ws $id.Value "Page.navigate" @{ url = $url }
+  Start-Sleep -Seconds 2
+}
 # 真·键盘输入：先用鼠标点进编辑器，再用 CDP Input.insertText
 function Focus-And-Type($ws, $text, [ref]$id) {
   $id.Value++
@@ -100,6 +107,7 @@ try {
   $want = { param($name) $Scenario -eq "all" -or $Scenario -eq $name }
 
   if (& $want "hover") {
+    Reload-Page $ws ($Url + $Hash) ([ref]$id)
     $id++
     $js = @'
 (async () => {
@@ -116,9 +124,25 @@ try {
 })()
 '@
     $results += "hover => " + (Eval-Js $ws $js ([ref]$id))
+    if ($Screenshot) {
+      $id++
+      Send-Cdp $ws $id.Value "Page.captureScreenshot" @{ format = "png" }
+      $deadline2 = (Get-Date).AddSeconds(8)
+      while ((Get-Date) -lt $deadline2) {
+        $msg = Receive-Cdp $ws 1500
+        if (-not $msg) { continue }
+        $obj = $msg | ConvertFrom-Json
+        if ($obj.id -eq $id.Value -and $obj.result -and $obj.result.data) {
+          [IO.File]::WriteAllBytes($Screenshot, [Convert]::FromBase64String($obj.result.data))
+          $results += "screenshot => $Screenshot"
+          break
+        }
+      }
+    }
   }
 
   if (& $want "todo") {
+    Reload-Page $ws ($Url + $Hash) ([ref]$id)
     $id++
     $js = @'
 (async () => {
@@ -134,6 +158,7 @@ try {
   }
 
   if (& $want "autosave") {
+    Reload-Page $ws ($Url + $Hash) ([ref]$id)
     $typed = Focus-And-Type $ws "`n<!-- autosave-marker -->`n" ([ref]$id)
     Start-Sleep -Milliseconds 500
     $id++
@@ -149,6 +174,7 @@ try {
   }
 
   if (& $want "conflict" -and $NotesDir) {
+    Reload-Page $ws ($Url + $Hash) ([ref]$id)
     # 页面已加载后，外部改文件使版本号失效
     $rel = [uri]::UnescapeDataString(($Hash -replace '^#/file/', ''))
     $disk = Join-Path $NotesDir $rel.Replace('/', '\')
