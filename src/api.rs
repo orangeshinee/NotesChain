@@ -39,6 +39,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/git/status", get(git_status))
         .route("/api/git/log", get(git_log))
         .route("/api/git/show", get(git_show))
+        .route("/api/git/restore", post(git_restore))
+        .route("/api/backlinks", get(backlinks))
         .route("/app.js", get(app_js))
         .route("/style.css", get(style_css))
         .route("/editor.js", get(editor_js))
@@ -524,6 +526,152 @@ async fn git_show(State(st): State<Arc<AppState>>, Query(p): Query<ShowParams>) 
         "hash": p.hash,
         "patch": String::from_utf8_lossy(&output.stdout).to_string(),
     })))
+}
+// ---------------------------------------------------------------- 回滚 / 反向链接
+
+#[derive(Deserialize)]
+struct RestoreRequest {
+    hash: String,
+    path: String,
+}
+
+async fn git_restore(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<RestoreRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let Some((repo, _)) = scoped_repo(&st) else {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "git_unavailable", "未启用 git"));
+    };
+    if body.hash.len() < 4 || !body.hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "非法的提交号"));
+    }
+    if !body.path.ends_with(".md") {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "只支持恢复 .md 文件"));
+    }
+    let abs = st.resolve(&body.path).map_err(ApiError::bad_path)?;
+    let rel = abs
+        .strip_prefix(&repo)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .map_err(|_| ApiError::bad_path("文件不在仓库内"))?;
+
+    let hash = body.hash.clone();
+    let spec = format!("{hash}:{rel}");
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["show", &spec])
+            .current_dir(&repo)
+            .output()
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::internal)?;
+
+    if !output.status.success() {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "该提交里没有这个文件",
+        ));
+    }
+    let content = String::from_utf8_lossy(&output.stdout).to_string();
+
+    let rel_path = st.relative(&abs);
+    let lock = st.lock_for(&rel_path).await;
+    let _guard = lock.lock().await;
+    todo_write::atomic_write(&abs, &content).map_err(ApiError::internal)?;
+    st.index
+        .write()
+        .await
+        .upsert(&st.root, &rel_path)
+        .map_err(ApiError::internal)?;
+    st.git.notify();
+    st.revision
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    Ok(Json(json!({
+        "path": rel_path,
+        "version": crate::index::version_of(mtime_ms(&abs), &content),
+    })))
+}
+
+#[derive(Deserialize)]
+struct BacklinksParams {
+    path: String,
+}
+
+/// `[[目标]]` 的解析（PRD 3.5.2）：含 `/` 以 notes 根为基准；不含 `/` 只在 raw/ 下按裸名找。
+fn resolve_wikilink(target: &str, from_dir: &str) -> String {
+    let clean = target.trim();
+    let clean = clean.strip_suffix(".md").unwrap_or(clean);
+    if clean.contains('/') {
+        normalize_rel(clean)
+    } else {
+        let base = format!("raw/{clean}");
+        let _ = from_dir;
+        normalize_rel(&base)
+    }
+}
+
+fn normalize_rel(path: &str) -> String {
+    let mut segs: Vec<&str> = Vec::new();
+    for seg in path.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                segs.pop();
+            }
+            other => segs.push(other),
+        }
+    }
+    segs.join("/")
+}
+
+async fn backlinks(
+    State(st): State<Arc<AppState>>,
+    Query(p): Query<BacklinksParams>,
+) -> Json<Value> {
+    let target = normalize_rel(p.path.trim().trim_end_matches(".md"));
+    let index = st.index.read().await;
+    let mut items = Vec::new();
+
+    for file in &index.files {
+        let dir = file.path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        let lines: Vec<&str> = file.content.lines().collect();
+        let flags = crate::markdown::code_block_flags(&lines);
+        for (idx, line) in lines.iter().enumerate() {
+            if flags[idx] {
+                continue;
+            }
+            for cap in wikilink_iter(line) {
+                if resolve_wikilink(&cap, dir) == target {
+                    items.push(json!({
+                        "path": file.path,
+                        "line": idx + 1,
+                        "text": line.trim(),
+                    }));
+                }
+            }
+        }
+    }
+
+    Json(json!({ "path": target, "total": items.len(), "items": items }))
+}
+
+fn wikilink_iter(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find("[[") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("]]") else {
+            break;
+        };
+        let inner = &after[..end];
+        if !inner.trim().is_empty() {
+            out.push(inner.trim().to_string());
+        }
+        rest = &after[end + 2..];
+    }
+    out
 }
 // ---------------------------------------------------------------- 日程
 

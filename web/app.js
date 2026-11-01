@@ -574,6 +574,36 @@ async function showFile(path, line) {
   });
   currentEditor.focus();
   if (line) scrollToLine(line);
+  if (state.links) mountBacklinks(wrap, path);
+}
+
+async function mountBacklinks(wrap, path) {
+  const panel = el('section', 'backlinks');
+  const head = el('div', 'section-head');
+  head.append(el('h2', '', '反向链接'));
+  panel.append(head);
+  const body = el('div', 'muted', '读取中…');
+  panel.append(body);
+  wrap.append(panel);
+  try {
+    const data = await api('/api/backlinks?path=' + encodeURIComponent(path));
+    body.replaceChildren();
+    if (!data.total) {
+      body.textContent = '没有其他笔记链接到这里。';
+      return;
+    }
+    const list = el('ul', 'results');
+    for (const item of data.items) {
+      const li = el('li');
+      li.append(el('div', 'meta', `${item.path}:${item.line}`));
+      li.append(el('div', 'snippet', item.text));
+      li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.path) + '@' + item.line));
+      list.append(li);
+    }
+    body.replaceChildren(list);
+  } catch (err) {
+    body.textContent = '读取失败：' + (err.message || err);
+  }
 }
 
 function makeEditor(host, content, options) {
@@ -1010,9 +1040,37 @@ async function showCommit(hash) {
   main.append(wrap);
   try {
     const data = await api('/api/git/show?hash=' + encodeURIComponent(hash));
+    const files = Array.from(new Set(
+      Array.from(data.patch.matchAll(/^\+\+\+ b\/(.+?)\r?$/gm)).map((m) => m[1].trim())
+    ));
+    const bar = el('div', 'restore-bar');
+    if (files.length) {
+      bar.append(el('span', 'muted', '该提交涉及：'));
+      for (const file of files) {
+        const btn = el('button', 'seg', '恢复 ' + file);
+        btn.type = 'button';
+        btn.addEventListener('click', async () => {
+          if (!window.confirm(`把「${file}」恢复到该提交的版本？当前内容会被覆盖。`)) return;
+          btn.disabled = true;
+          try {
+            await api('/api/git/restore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ hash, path: file }),
+            });
+            await loadSidebar();
+            btn.textContent = '已恢复';
+          } catch (err) {
+            btn.disabled = false;
+            window.alert('恢复失败：' + (err.message || err));
+          }
+        });
+        bar.append(btn);
+      }
+    }
     const pre = el('pre', 'patch');
     pre.textContent = data.patch || '（该提交没有文本差异）';
-    wrap.replaceChildren(pre);
+    wrap.replaceChildren(bar, pre);
     main.replaceChildren(docHead('提交', hash.slice(0, 8), ''), wrap);
   } catch (err) {
     wrap.replaceChildren(errorState(err));
