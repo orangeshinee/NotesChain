@@ -1021,7 +1021,11 @@ function setGit(git) {
   parts.push(git.last_commit ? '上次提交 ' + git.last_commit.slice(0, 16).replace('T', ' ') : '尚无提交');
   if (git.pending_files) parts.push('待提交 ' + git.pending_files);
   box.textContent = parts.join(' · ');
-  box.title = git.last_error ? '最近错误：' + git.last_error : '仅本地版本历史，无远程备份';
+  const tips = [];
+  if (git.repo_root) tips.push('仓库根：' + git.repo_root);
+  tips.push('仅本地版本历史，无远程备份');
+  if (git.last_error) tips.push('最近错误：' + git.last_error);
+  box.title = tips.join('\n');
 }
 
 // ---------------------------------------------------------------- 路由

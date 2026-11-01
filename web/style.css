@@ -770,3 +770,5 @@ table.todos th { position: relative; user-select: none; }
 .day.collapsed .day-caret { transform: rotate(-90deg); }
 .day.collapsed .slots,
 .day.collapsed .unrec { display: none; }
+
+.cm-time { font-weight: 600; font-variant-numeric: tabular-nums; }
