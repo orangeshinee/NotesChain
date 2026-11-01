@@ -4,3 +4,7 @@
 *.log
 .noteschain.*.tmp
 .demo/
+
+# 本地技能安装产物（不属于项目）
+.agents/
+skillhub.install.md
