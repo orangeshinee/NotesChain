@@ -558,6 +558,7 @@ async function showFile(path, line) {
     assetFor,
     links: state.links,
     onOpenLink: openLink,
+    onOpenHref: openHref,
     onToggleTodo: async (info) => {
       // 编辑器里点待办复选框：直接按行回写，不走整文件保存
       const res = await api('/api/todos', {
@@ -929,6 +930,20 @@ searchInput.addEventListener('input', () => {
 
 window.addEventListener('hashchange', route);
 
+function openHref(href) {
+  const clean = String(href || '').split('#')[0].trim();
+  if (!clean) return;
+  const base = state.activePath ? state.activePath.split('/').slice(0, -1).join('/') : '';
+  const segs = [];
+  for (const seg of ((base ? base + '/' : '') + clean).split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') segs.pop();
+    else segs.push(seg);
+  }
+  const path = segs.join('/');
+  if (!/\.md$/i.test(path)) return;
+  go('/file/' + encodeURIComponent(path));
+}
 async function openLink(target) {
   const clean = String(target || '').trim();
   if (!clean) return;

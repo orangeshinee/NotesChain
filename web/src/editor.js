@@ -10,7 +10,7 @@ import {
   Decoration,
   WidgetType,
 } from '@codemirror/view';
-import { EditorState, RangeSetBuilder } from '@codemirror/state';
+import { EditorState, RangeSetBuilder, StateField } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
@@ -55,6 +55,91 @@ function nowStamp() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 链接 [文本](地址) */
+let linkHandler = null;
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function inlineHtml(raw) {
+  let s = escapeHtml(raw);
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  s = s.replace(/(^|[\s(（，。；：])#([\w\u3400-\u9fff/-]+)/g, '$1<span class="tag">#$2</span>');
+  return s;
+}
+
+class LinkWidget extends WidgetType {
+  constructor(text, href) {
+    super();
+    this.text = text;
+    this.href = href;
+  }
+  eq(other) {
+    return other.text === this.text && other.href === this.href;
+  }
+  toDOM() {
+    const a = document.createElement('a');
+    a.className = 'cm-link';
+    a.textContent = this.text;
+    a.title = this.href;
+    a.addEventListener('mousedown', (e) => e.preventDefault());
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (/^https?:/i.test(this.href)) {
+        window.open(this.href, '_blank', 'noreferrer');
+      } else if (linkHandler) {
+        linkHandler(this.href);
+      }
+    });
+    return a;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+/** 表格：整块替换为渲染后的 HTML 表格 */
+class TableWidget extends WidgetType {
+  constructor(html) {
+    super();
+    this.html = html;
+  }
+  eq(other) {
+    return other.html === this.html;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-table';
+    wrap.contentEditable = 'false';
+    wrap.innerHTML = this.html;
+    return wrap;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+function renderTableHtml(rows) {
+  if (!rows.length) return '';
+  const cells = (line) =>
+    line
+      .replace(/^\s*\|/, '')
+      .replace(/\|\s*$/, '')
+      .split('|')
+      .map((c) => c.trim());
+  const header = cells(rows[0]);
+  const body = rows.slice(2).map(cells);
+  let html = '<table><thead><tr>';
+  html += header.map((c) => `<th>${inlineHtml(c)}</th>`).join('');
+  html += '</tr></thead><tbody>';
+  for (const row of body) {
+    html += '<tr>' + row.map((c) => `<td>${inlineHtml(c)}</td>`).join('') + '</tr>';
+  }
+  return html + '</tbody></table>';
+}
 /** 双链 [[目标]]（PRD 3.5，默认关闭） */
 let openLinkHandler = null;
 
@@ -165,6 +250,60 @@ async function toggleTask(view, pos) {
   }
 }
 
+function activeLineNumbers(state) {
+  const set = new Set();
+  for (const range of state.selection.ranges) {
+    const first = state.doc.lineAt(range.from).number;
+    const last = state.doc.lineAt(range.to).number;
+    for (let n = first; n <= last; n += 1) set.add(n);
+  }
+  return set;
+}
+
+function buildTableDecorations(state) {
+  const decos = [];
+  const doc = state.doc;
+  const active = activeLineNumbers(state);
+  let n = 1;
+  while (n <= doc.lines) {
+    const line = doc.line(n);
+    if (!line.text.trimStart().startsWith('|') || n >= doc.lines) {
+      n += 1;
+      continue;
+    }
+    const sep = doc.line(n + 1).text;
+    if (!/^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(sep)) {
+      n += 1;
+      continue;
+    }
+    let end = n + 1;
+    const rows = [line.text, sep];
+    while (end < doc.lines) {
+      const next = doc.line(end + 1).text;
+      if (!next.trim() || !next.includes('|')) break;
+      rows.push(next);
+      end += 1;
+    }
+    let hasActive = false;
+    for (let k = n; k <= end; k += 1) if (active.has(k)) hasActive = true;
+    if (!hasActive) {
+      decos.push(
+        Decoration.replace({ widget: new TableWidget(renderTableHtml(rows)), block: true }).range(
+          doc.line(n).from,
+          doc.line(end).to
+        )
+      );
+    }
+    n = end + 1;
+  }
+  return Decoration.set(decos, true);
+}
+
+const tableField = StateField.define({
+  create: (state) => buildTableDecorations(state),
+  update: (deco, tr) => (tr.docChanged || tr.selection ? buildTableDecorations(tr.state) : deco),
+  provide: (field) => EditorView.decorations.from(field),
+});
 function buildDecorations(view, assetFor, linksEnabled) {
   const builder = new RangeSetBuilder();
   const activeLines = new Set();
@@ -173,62 +312,81 @@ function buildDecorations(view, assetFor, linksEnabled) {
     const last = view.state.doc.lineAt(range.to).number;
     for (let n = first; n <= last; n++) activeLines.add(n);
   }
+  const doc = view.state.doc;
 
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
     while (pos <= to) {
-      const line = view.state.doc.lineAt(pos);
-      if (!activeLines.has(line.number)) {
-        const text = line.text;
+      const line = doc.lineAt(pos);
+      const text = line.text;
 
-        // 待办复选框：替换 `- [ ]` 标记
+      if (!activeLines.has(line.number)) {
+        const ranges = [];
+
         const task = /^(\s*)- \[([ xX])\]\s?/.exec(text);
         if (task) {
-          builder.add(
-            line.from,
-            line.from + task[0].length,
-            Decoration.replace({
+          ranges.push({
+            from: line.from,
+            to: line.from + task[0].length,
+            deco: Decoration.replace({
               widget: new CheckboxWidget(task[2].toLowerCase() === 'x', line.from + task[1].length),
-            })
-          );
-          // 已完成行的 ✅ 时间戳淡出
+            }),
+          });
           const marker = text.indexOf('✅');
           if (marker >= 0) {
-            builder.add(line.from + marker, line.to, markHide);
+            ranges.push({ from: line.from + marker, to: line.to, deco: markHide });
           }
         }
 
-        // 图片 → 行内预览
         for (const m of text.matchAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g)) {
-          const start = line.from + m.index;
-          builder.add(
-            start,
-            start + m[0].length,
-            Decoration.replace({ widget: new ImageWidget(m[1], assetFor(m[2])) })
-          );
+          const startAt = line.from + m.index;
+          ranges.push({
+            from: startAt,
+            to: startAt + m[0].length,
+            deco: Decoration.replace({ widget: new ImageWidget(m[1], assetFor(m[2])) }),
+          });
         }
 
-        // 双链
+        for (const m of text.matchAll(/(?<!!)\[([^\]]+)\]\(([^)\s]+)\)/g)) {
+          const startAt = line.from + m.index;
+          ranges.push({
+            from: startAt,
+            to: startAt + m[0].length,
+            deco: Decoration.replace({ widget: new LinkWidget(m[1], m[2]) }),
+          });
+        }
+
         if (linksEnabled) {
           for (const m of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) {
-            const start = line.from + m.index;
-            builder.add(start, start + m[0].length, Decoration.replace({ widget: new WikiLinkWidget(m[1].trim()) }));
+            const startAt = line.from + m.index;
+            ranges.push({
+              from: startAt,
+              to: startAt + m[0].length,
+              deco: Decoration.replace({ widget: new WikiLinkWidget(m[1].trim()) }),
+            });
           }
         }
 
-        // 其余语法符号淡出
         for (const m of text.matchAll(/(\*\*|__|\*|_|`+|~~|^#{1,6}\s)/g)) {
-          const start = line.from + m.index;
-          builder.add(start, start + m[0].length, markHide);
+          const startAt = line.from + m.index;
+          ranges.push({ from: startAt, to: startAt + m[0].length, deco: markHide });
+        }
+
+        ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+        let lastTo = -1;
+        for (const r of ranges) {
+          if (r.from < lastTo) continue; // 跳过重叠，保证 RangeSet 有序不交叉
+          builder.add(r.from, r.to, r.deco);
+          lastTo = r.to;
         }
       }
+
       pos = line.to + 1;
       if (line.to >= to) break;
     }
   }
   return builder.finish();
 }
-
 function livePreviewExtension(assetFor, onToggleTodo, linksEnabled) {
   class LivePreviewPlugin {
     constructor(view) {
@@ -251,6 +409,7 @@ function livePreviewExtension(assetFor, onToggleTodo, linksEnabled) {
 export function create(opts) {
   const { parent, doc, onChange, onSave, onToggleTodo, assetFor, links, onOpenLink } = opts;
   openLinkHandler = onOpenLink || null;
+  linkHandler = opts.onOpenHref || null;
   const view = new EditorView({
     parent,
     state: EditorState.create({
@@ -263,6 +422,7 @@ export function create(opts) {
         markdown({ base: markdownLanguage, addKeymap: true }),
         syntaxHighlighting(highlight),
         livePreviewExtension(assetFor || ((p) => p), onToggleTodo, !!links),
+        tableField,
         theme,
         keymap.of([
           {
