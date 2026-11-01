@@ -106,18 +106,28 @@ class LinkWidget extends WidgetType {
 
 /** 表格：整块替换为渲染后的 HTML 表格 */
 class TableWidget extends WidgetType {
-  constructor(html) {
+  constructor(html, pos) {
     super();
     this.html = html;
+    this.pos = typeof pos === 'number' ? pos : 0;
   }
   eq(other) {
     return other.html === this.html;
   }
-  toDOM() {
+  toDOM(view) {
     const wrap = document.createElement('div');
     wrap.className = 'cm-table';
     wrap.contentEditable = 'false';
+    wrap.title = '双击编辑表格（露出 Markdown 源码）';
     wrap.innerHTML = this.html;
+    wrap.addEventListener('dblclick', () => {
+      try {
+        view.dispatch({ selection: { anchor: this.pos }, scrollIntoView: true });
+        view.focus();
+      } catch (err) {
+        /* ignore */
+      }
+    });
     return wrap;
   }
   ignoreEvent() {
@@ -292,7 +302,7 @@ function buildTableDecorations(state) {
     for (let k = n; k <= end; k += 1) if (active.has(k)) hasActive = true;
     if (!hasActive) {
       decos.push(
-        Decoration.replace({ widget: new TableWidget(renderTableHtml(rows)), block: true }).range(
+        Decoration.replace({ widget: new TableWidget(renderTableHtml(rows), doc.line(n).from), block: true }).range(
           doc.line(n).from,
           doc.line(end).to
         )

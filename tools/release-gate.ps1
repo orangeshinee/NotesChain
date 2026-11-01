@@ -87,7 +87,14 @@ if (-not $SkipBrowser) {
     $checks = [regex]::Matches($probeText, '(\w[\w-]*) => (.*)')
     foreach ($c in $checks) {
       $value = $c.Groups[2].Value.Trim()
+      $name = $c.Groups[1].Value
       $ok = $value -ne '' -and $value -notmatch 'no-|JS-ERROR' -and $value -notmatch '"added":false' -and $value -notmatch '"printed":0'
+      if ($name -eq 'preview') {
+        $ok = $ok -and $value -match '"defaultPreview":true' -and $value -match '"editorVisible":true' -and $value -match '"previewAgain":true'
+      }
+      if ($name -eq 'export') {
+        $ok = $ok -and $value -match '"printed":1' -and $value -match '"previewVisible":true'
+      }
       Record "浏览器：$($c.Groups[1].Value)" $ok $value.Substring(0, [Math]::Min(70, $value.Length))
     }
   }

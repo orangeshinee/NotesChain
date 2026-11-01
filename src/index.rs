@@ -125,6 +125,7 @@ impl Index {
                     version: file.version.clone(),
                     done: todo.done,
                     done_at: todo.done_at.clone(),
+                    priority: todo.priority,
                 });
             }
         }
@@ -155,6 +156,7 @@ pub struct TodoRow {
     pub version: String,
     pub done: bool,
     pub done_at: Option<String>,
+    pub priority: Option<u8>,
 }
 
 fn load_file(abs: &Path, rel: &str) -> anyhow::Result<FileEntry> {

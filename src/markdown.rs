@@ -19,6 +19,36 @@ pub struct Todo {
     pub done: bool,
     /// 完成时间原文，如 `2026-11-01 09:12`
     pub done_at: Option<String>,
+    /// 优先级 0-9（`!p1`），None 表示未标
+    pub priority: Option<u8>,
+}
+
+/// 解析 `!p0`–`!p9`（大小写不敏感），返回 (优先级, 去掉该标记后的文本)
+pub fn extract_priority(text: &str) -> (Option<u8>, String) {
+    let bytes: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut found: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        if found.is_none()
+            && bytes[i] == '!'
+            && i + 2 < bytes.len()
+            && (bytes[i + 1] == 'p' || bytes[i + 1] == 'P')
+            && bytes[i + 2].is_ascii_digit()
+        {
+            let prev_ok = i == 0 || bytes[i - 1].is_whitespace();
+            let next_ok = i + 3 >= bytes.len() || bytes[i + 3].is_whitespace();
+            if prev_ok && next_ok {
+                found = Some((bytes[i + 2] as u8) - b'0');
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    let cleaned = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    (found, cleaned)
 }
 
 /// 标记每一行是否处于代码块内（含围栏行本身）。
@@ -151,6 +181,7 @@ pub fn parse_todos(content: &str) -> Vec<Todo> {
             }
         }
         let text = text.trim_end().to_string();
+        let (priority, text) = extract_priority(&text);
         out.push(Todo {
             line: idx + 1,
             indent,
@@ -159,6 +190,7 @@ pub fn parse_todos(content: &str) -> Vec<Todo> {
             text,
             done,
             done_at: done_at(line),
+            priority,
         });
     }
 
@@ -314,6 +346,15 @@ todo: 代码块里的不算
         assert_eq!(hits.len(), 3);
         assert_eq!(hits[0].0, 2);
         assert!(hits[2].1.contains("TODO"));
+    }
+    #[test]
+    fn parses_priority() {
+        assert_eq!(extract_priority("发周报 !p1"), (Some(1), "发周报".to_string()));
+        assert_eq!(extract_priority("!P0 先做这个"), (Some(0), "先做这个".to_string()));
+        assert_eq!(extract_priority("没有优先级"), (None, "没有优先级".to_string()));
+        // 不合法写法不识别
+        assert_eq!(extract_priority("a!p1"), (None, "a!p1".to_string()));
+        assert_eq!(extract_priority("!p10"), (None, "!p10".to_string()));
     }
     #[test]
     fn fence_flags() {

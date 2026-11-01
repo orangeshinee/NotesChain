@@ -13,6 +13,7 @@ const state = {
   links: false,
   todoLimit: 1000,
   todoStatus: 'open',
+  todoSort: 'default',
   duplicateNames: [],
   pathSet: new Set(),
   tagSort: 'name',
@@ -309,11 +310,18 @@ async function showHome() {
   wrap.append(loadingState());
   main.append(wrap);
   try {
-    const [todos, git, schedule] = await Promise.all([
+    const [todosRaw, git, schedule] = await Promise.all([
       api('/api/todos?status=' + state.todoStatus + '&limit=' + state.todoLimit + (state.todoTag ? '&tag=' + encodeURIComponent(state.todoTag) : '')),
       api('/api/git/status').catch(() => null),
       api('/api/schedule?range=' + state.scheduleRange).catch(() => null),
     ]);
+    const todos = Object.assign({}, todosRaw);
+    if (state.todoSort === 'priority') {
+      const rank = (item) => (typeof item.priority === 'number' ? item.priority : 99);
+      todos.items = todosRaw.items
+        .slice()
+        .sort((a, b) => rank(a) - rank(b) || String(a.path).localeCompare(String(b.path)) || a.line - b.line);
+    }
     setGit(git);
     state.scheduleData = schedule;
     startScheduleTicker();
@@ -518,6 +526,19 @@ function buildTodoSection(todos, onShowAll) {
   });
   head.append(filter);
 
+  const sortSel = el('select', 'todo-filter');
+  for (const [value, label] of [['default', '默认排序'], ['priority', '按优先级']]) {
+    const opt = el('option', '', label);
+    opt.value = value;
+    sortSel.append(opt);
+  }
+  sortSel.value = state.todoSort || 'default';
+  sortSel.addEventListener('change', () => {
+    state.todoSort = sortSel.value;
+    showHome();
+  });
+  head.append(sortSel);
+
   const toggle = el('span', 'segmented');
   for (const [value, label] of [['open', '未完成'], ['done', '已完成'], ['all', '全部']]) {
     const btn = el('button', state.todoStatus === value ? 'seg active' : 'seg', label);
@@ -635,7 +656,7 @@ function resolveLinkPath(target) {
 function buildTodoTable(items) {
   const table = el('table', 'todos');
   const saved = loadColWidths();
-  const defaults = ['38px', '34%', '22%', 'auto'];
+  const defaults = ['46px', '38px', '34%', '22%', 'auto'];
   const colEls = defaults.map((width, index) => {
     const col = document.createElement('col');
     col.style.width = (saved && saved[index]) || width;
@@ -647,10 +668,10 @@ function buildTodoTable(items) {
 
   const head = el('thead');
   const hr = el('tr');
-  ['', '事项', '文件', '标签'].forEach((label, index) => {
+  ['#', '', '事项', '文件', '标签'].forEach((label, index) => {
     const th = el('th');
     th.append(el('span', '', label));
-    if (index > 0 && index < 3) th.append(makeColResizer(index, colEls));
+    if (index > 1 && index < 4) th.append(makeColResizer(index, colEls));
     hr.append(th);
   });
   head.append(hr);
@@ -659,7 +680,7 @@ function buildTodoTable(items) {
   if (!items.length) {
     const tr = el('tr');
     const td = el('td', '', '没有未完成的待办，清静。');
-    td.colSpan = 4;
+    td.colSpan = 5;
     tr.append(td);
     body.append(tr);
   }
@@ -671,6 +692,7 @@ function buildTodoTable(items) {
     tr.dataset.rawLine = todo.raw_line;
     tr.dataset.version = todo.version;
 
+    const tdIdx = el('td', 'idx-cell', typeof index === 'number' ? String(index + 1) : '');
     const tdCheck = el('td', 'check');
     const box = document.createElement('input');
     box.type = 'checkbox';
@@ -681,7 +703,10 @@ function buildTodoTable(items) {
 
     const tdText = el('td');
     if (todo.indent) tdText.style.paddingLeft = `${10 + todo.indent * 8}px`;
-    if (typeof index === 'number') tdText.append(el('span', 'idx', String(index + 1)));
+
+    if (typeof todo.priority === 'number') {
+      tdText.append(el('span', 'prio p' + todo.priority, 'P' + todo.priority));
+    }
     const text = el('span', 'text', (todo.indent ? '· ' : '') + todo.text);
     tdText.append(text);
     if (todo.done_at) tdText.append(el('span', 'done-at', '✅ ' + todo.done_at));
@@ -703,7 +728,7 @@ function buildTodoTable(items) {
       tdTags.append(el('span', 'no-tag', '—'));
     }
 
-    tr.append(tdCheck, tdText, tdFile, tdTags);
+    tr.append(tdIdx, tdCheck, tdText, tdFile, tdTags);
     return tr;
   };
 
@@ -813,6 +838,7 @@ async function showFile(path, line) {
     state.previewMode = on;
     if (on) {
       article.replaceChildren(...renderPreviewNodes(currentEditor ? currentEditor.getValue() : data.content, path));
+      if (currentEditor) renderOutline(outline, currentEditor.getValue());
       article.hidden = false;
       host.hidden = true;
       previewBtn.textContent = '编辑';
@@ -829,9 +855,14 @@ async function showFile(path, line) {
   const exportBtn = el('button', 'seg', '导出 PDF');
   exportBtn.type = 'button';
   exportBtn.title = '切到渲染视图并调用浏览器打印（可选「另存为 PDF」）';
-  exportBtn.addEventListener('click', () => {
+  exportBtn.addEventListener('click', async () => {
+    try {
+      await flush(false);
+    } catch (err) {
+      /* 保存失败也让用户能打印当前视图 */
+    }
     setPreview(true);
-    window.print();
+    setTimeout(() => window.print(), 300);
   });
   head.append(exportBtn);
 
@@ -956,7 +987,8 @@ async function showFile(path, line) {
     },
   });
   currentEditor.focus();
-  setPreview(!!state.previewMode);
+  state.previewMode = true;
+  setPreview(true);
   if (line) highlightLine(line);
   if (state.links) {
     mountBacklinks(wrap, path);
@@ -1781,6 +1813,30 @@ if (rebuildBtn) {
       window.alert('重建失败：' + (err.message || err));
     } finally {
       rebuildBtn.disabled = false;
+    }
+  });
+}
+
+const wideBtn = document.getElementById('wide-toggle');
+if (wideBtn) {
+  const applyWide = (on) => {
+    document.body.classList.toggle('wide', on);
+    wideBtn.textContent = on ? '常规宽度' : '宽屏';
+  };
+  let wide = false;
+  try {
+    wide = localStorage.getItem('nc.wide') === '1';
+  } catch (err) {
+    wide = false;
+  }
+  applyWide(wide);
+  wideBtn.addEventListener('click', () => {
+    wide = !document.body.classList.contains('wide');
+    applyWide(wide);
+    try {
+      localStorage.setItem('nc.wide', wide ? '1' : '0');
+    } catch (err) {
+      /* ignore */
     }
   });
 }

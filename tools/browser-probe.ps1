@@ -68,7 +68,7 @@ function Reload-Page($ws, $url) {
 # 真·键盘输入：先用鼠标点进编辑器，再用 CDP Input.insertText
 function EnsureEdit($ws) {
   $script:cdpSeq++
-  $null = Eval-Js $ws "(() => { const b = Array.from(document.querySelectorAll('.doc-head .seg')).find((x) => x.textContent.trim() === '编辑'); if (b) b.click(); return 'ok'; })()" $id
+  $null = Eval-Js $ws "(() => { const b = Array.from(document.querySelectorAll('.doc-head .seg')).find((x) => x.textContent.trim() === '编辑'); if (b) b.click(); return 'ok'; })()"
   Start-Sleep -Milliseconds 700
 }
 
