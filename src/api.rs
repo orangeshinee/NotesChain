@@ -18,21 +18,38 @@ use crate::todo_write::{self, LocateError};
 /// 每日文件骨架的权威副本（PRD 3.1.4），编译期内嵌，不读运行时文件。
 const DAILY_TEMPLATE: &str = include_str!("../docs/templates/daily-note.md");
 const INDEX_HTML: &str = include_str!("../web/index.html");
+const APP_JS: &str = include_str!("../web/app.js");
+const STYLE_CSS: &str = include_str!("../web/style.css");
 
 pub fn router(state: Arc<AppState>) -> Router {
-    let api = Router::new()
+    let protected = Router::new()
         .route("/api/files", get(list_files))
         .route("/api/files/*path", get(read_file).put(save_file))
         .route("/api/todos", get(list_todos).patch(patch_todo))
+        .route("/api/tags", get(list_tags))
+        .route("/api/search", get(search))
         .route("/api/daily", post(ensure_daily))
         .route("/api/index/rebuild", post(rebuild_index))
         .route("/api/git/status", get(git_status))
+        .route("/app.js", get(app_js))
+        .route("/style.css", get(style_css))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth));
 
     Router::new()
         .route("/", get(root))
-        .merge(api)
+        .merge(protected)
         .with_state(state)
+}
+
+async fn app_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        APP_JS,
+    )
+}
+
+async fn style_css() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], STYLE_CSS)
 }
 
 // ---------------------------------------------------------------- 错误与鉴权
@@ -374,6 +391,186 @@ fn probe_git(root: &std::path::Path) -> Value {
         "pending_files": pending,
         "note": "仅本地版本历史，无远程备份",
     })
+}
+
+// ---------------------------------------------------------------- 标签树
+
+#[derive(Default)]
+struct TagNode {
+    notes: usize,
+    todos: usize,
+    children: BTreeMap<String, TagNode>,
+}
+
+impl TagNode {
+    /// 一个标签贡献给它自身与全部祖先：点一级标签要包含所有子标签的内容。
+    fn insert(&mut self, segments: &[&str], notes: usize, todos: usize) {
+        let Some((head, rest)) = segments.split_first() else {
+            return;
+        };
+        let node = self.children.entry((*head).to_string()).or_default();
+        node.notes += notes;
+        node.todos += todos;
+        node.insert(rest, notes, todos);
+    }
+
+    fn children_json(&self, prefix: &str) -> Vec<Value> {
+        self.children
+            .iter()
+            .map(|(name, node)| {
+                let path = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                json!({
+                    "name": name,
+                    "path": path,
+                    "notes": node.notes,
+                    "todos": node.todos,
+                    "children": node.children_json(&path),
+                })
+            })
+            .collect()
+    }
+}
+
+async fn list_tags(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let index = st.index.read().await;
+    let mut root = TagNode::default();
+    for file in &index.files {
+        for tag in &file.tags {
+            root.insert(&tag.split('/').collect::<Vec<_>>(), 1, 0);
+        }
+        for todo in file.todos.iter().filter(|t| !t.done) {
+            for tag in &todo.tags {
+                root.insert(&tag.split('/').collect::<Vec<_>>(), 0, 1);
+            }
+        }
+    }
+    Json(json!({ "tree": root.children_json("") }))
+}
+
+// ---------------------------------------------------------------- 搜索
+
+#[derive(Deserialize)]
+struct SearchParams {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    tag: Option<String>,
+    /// open / done / all（默认 all）
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+async fn search(State(st): State<Arc<AppState>>, Query(p): Query<SearchParams>) -> Json<Value> {
+    let index = st.index.read().await;
+    let needle = p.q.trim().to_lowercase();
+    let tag_filter = p
+        .tag
+        .as_deref()
+        .map(|t| t.trim().trim_start_matches('#').to_string())
+        .filter(|t| !t.is_empty());
+    let limit = p.limit.unwrap_or(200).min(1000);
+
+    let mut files: Vec<&crate::index::FileEntry> = index.files.iter().collect();
+    files.sort_by(|a, b| match (&a.diary_date, &b.diary_date) {
+        (Some(x), Some(y)) => y.cmp(x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.path.cmp(&b.path),
+    });
+
+    let mut items: Vec<Value> = Vec::new();
+    for file in files {
+        if let Some(tag) = &tag_filter {
+            let hit = file
+                .tags
+                .iter()
+                .any(|t| t == tag || t.starts_with(&format!("{tag}/")));
+            if !hit {
+                continue;
+            }
+        }
+
+        // 只有标签没有关键词：按文件返回
+        if needle.is_empty() {
+            items.push(json!({
+                "path": file.path,
+                "line": 1,
+                "snippet": first_line(&file.content),
+                "kind": "file",
+            }));
+            if items.len() >= limit {
+                break;
+            }
+            continue;
+        }
+
+        let lines: Vec<&str> = file.content.lines().collect();
+        let flags = crate::markdown::code_block_flags(&lines);
+        for (idx, line) in lines.iter().enumerate() {
+            let state = crate::markdown::todo_state(line);
+            match p.status.as_deref() {
+                Some("open") if state == Some(true) => continue,
+                Some("done") if state != Some(true) => continue,
+                _ => {}
+            }
+
+            let text = if state.is_some() {
+                crate::markdown::todo_text(line)
+            } else {
+                (*line).to_string()
+            };
+            if !text.to_lowercase().contains(&needle) {
+                continue;
+            }
+            let kind = if flags[idx] {
+                "code"
+            } else if state.is_some() {
+                "todo"
+            } else {
+                "text"
+            };
+            items.push(json!({
+                "path": file.path,
+                "line": idx + 1,
+                "snippet": snippet(&text),
+                "kind": kind,
+                "done": state,
+            }));
+            if items.len() >= limit {
+                break;
+            }
+        }
+        if items.len() >= limit {
+            break;
+        }
+    }
+
+    Json(json!({ "total": items.len(), "items": items }))
+}
+
+fn first_line(content: &str) -> String {
+    content
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| snippet(l.trim_start_matches('#').trim()))
+        .unwrap_or_default()
+}
+
+fn snippet(line: &str) -> String {
+    let trimmed = line.trim();
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= 160 {
+        trimmed.to_string()
+    } else {
+        let head: String = chars.iter().take(160).collect();
+        format!("{head}…")
+    }
 }
 
 fn mtime_ms(path: &std::path::Path) -> u64 {

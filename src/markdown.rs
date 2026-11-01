@@ -237,6 +237,38 @@ fn valid_tag(name: &str) -> bool {
     name.split('/').all(|seg| !seg.is_empty())
 }
 
+/// 待办行的完成状态；非待办行返回 None。
+pub fn todo_state(line: &str) -> Option<bool> {
+    todo_prefix(line).map(|(_, done, _)| done)
+}
+
+/// 待办的显示文本：去掉 `- [ ]` 前缀与行尾完成标记。
+pub fn todo_text(line: &str) -> String {
+    let stripped = strip_done_marker(line);
+    match todo_prefix(&stripped) {
+        Some((_, _, start)) => stripped[start..].trim().to_string(),
+        None => stripped.trim().to_string(),
+    }
+}
+
+/// 收集文件里出现的全部标签（去重）。代码块与标题行里的 `#` 不算。
+pub fn collect_tags(content: &str) -> Vec<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let flags = code_block_flags(&lines);
+    let mut out: Vec<String> = Vec::new();
+    for (idx, line) in lines.iter().enumerate() {
+        if flags[idx] {
+            continue;
+        }
+        for tag in extract_tags(line) {
+            if !out.contains(&tag) {
+                out.push(tag);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

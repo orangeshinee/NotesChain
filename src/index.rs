@@ -25,6 +25,8 @@ pub struct FileEntry {
     #[allow(dead_code)] // 全文搜索（PRD 4.5）将直接读索引里的正文，避免重复读盘
     pub content: String,
     pub todos: Vec<Todo>,
+    /// 文件里出现的全部标签（去重，含待办行上的）
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -139,6 +141,7 @@ fn load_file(abs: &Path, rel: &str) -> anyhow::Result<FileEntry> {
 
     let diary_date = detect_diary(rel, &content);
     let todos = markdown::parse_todos(&content);
+    let tags = markdown::collect_tags(&content);
 
     Ok(FileEntry {
         path: rel.to_string(),
@@ -148,6 +151,7 @@ fn load_file(abs: &Path, rel: &str) -> anyhow::Result<FileEntry> {
         diary_date,
         content,
         todos,
+        tags,
     })
 }
 
