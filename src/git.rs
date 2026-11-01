@@ -62,7 +62,11 @@ impl Git {
         }
 
         let (tx, rx) = mpsc::channel(64);
-        let runtime = Arc::new(Mutex::new(Runtime::default()));
+        let mut initial = Runtime::default();
+        if let Some(repo) = &repo_root {
+            initial.last_commit = last_commit_of(repo);
+        }
+        let runtime = Arc::new(Mutex::new(initial));
 
         if let Some(repo) = repo_root.clone() {
             // 单元测试里没有 Tokio 运行时：不启动提交协程即可
@@ -261,6 +265,26 @@ fn count_pending(scope_root: &Path, repo_root: &Path) -> usize {
                 .count()
         })
         .unwrap_or(0)
+}
+
+/// 已有仓库的历史：启动时读一次最近一次提交时间，避免界面显示「尚无提交」。
+fn last_commit_of(repo_root: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .args(["log", "-1", "--format=%cI"])
+        .current_dir(repo_root)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    chrono::DateTime::parse_from_rfc3339(&raw)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+        .or(Some(raw))
 }
 
 fn git_available() -> bool {
