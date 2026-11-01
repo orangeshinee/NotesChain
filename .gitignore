@@ -1,0 +1,5 @@
+/target
+/web/node_modules
+*.tmp
+*.log
+.noteschain.*.tmp

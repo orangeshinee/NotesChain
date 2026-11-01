@@ -1,0 +1,23 @@
+[package]
+name = "noteschain"
+version = "0.1.0"
+edition = "2021"
+description = "极度轻量、本地优先的 Markdown 笔记工具"
+publish = false
+
+[dependencies]
+anyhow = "1"
+axum = "0.7"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "sync", "time"] }
+walkdir = "2"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

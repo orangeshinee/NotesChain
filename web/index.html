@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NotesChain</title>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --fg: #24292f;
+    --muted: #6b7280;
+    --line: #e5e0d8;
+    --accent: #2f6f4f;
+    --done: #9aa5a0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181a;
+      --fg: #e6e2da;
+      --muted: #8d949c;
+      --line: #2c3033;
+      --accent: #7fbf9b;
+      --done: #6b7378;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.6 "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: .3px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  main { max-width: 880px; margin: 0 auto; padding: 20px 28px 80px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; margin: 28px 0 10px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 7px 8px;
+    border-radius: 6px;
+  }
+  li:hover { background: rgba(127, 127, 127, .07); }
+  li .box { margin-top: 3px; accent-color: var(--accent); width: 15px; height: 15px; flex: none; cursor: pointer; }
+  li .body { flex: 1; min-width: 0; }
+  li .text { white-space: pre-wrap; word-break: break-word; }
+  li .src { color: var(--muted); font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+  li .tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 0 6px;
+    margin-right: 5px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  li.busy { opacity: .5; }
+  li.failed .text { text-decoration: line-through; color: var(--done); }
+  .empty { color: var(--muted); padding: 10px 8px; }
+  .error { color: #b42318; padding: 10px 8px; }
+  footer { color: var(--muted); font-size: 12px; padding: 16px 28px 40px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>NotesChain</h1>
+  <span class="meta" id="summary">加载中…</span>
+  <span class="meta" id="git"></span>
+</header>
+
+<main>
+  <h2>未完成待办</h2>
+  <ul id="todos"><li class="empty">加载中…</li></ul>
+</main>
+
+<footer>仅本地版本历史，无远程备份</footer>
+
+<script>
+const list = document.getElementById('todos');
+const summary = document.getElementById('summary');
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function render(todos) {
+  list.replaceChildren();
+  summary.textContent = `未完成 ${todos.length} 条`;
+  if (!todos.length) {
+    list.append(el('li', 'empty', '没有未完成的待办，清静。'));
+    return;
+  }
+  for (const todo of todos) {
+    const row = el('li');
+    row.dataset.path = todo.path;
+    row.dataset.line = todo.line;
+    row.dataset.rawLine = todo.raw_line;
+    row.dataset.version = todo.version;
+
+    const box = el('input', 'box');
+    box.type = 'checkbox';
+    box.checked = false;
+    box.addEventListener('change', () => toggle(row, box));
+
+    const body = el('div', 'body');
+    const text = el('div', 'text');
+    for (const tag of todo.tags) text.append(el('span', 'tag', '#' + tag));
+    text.append(document.createTextNode(todo.text));
+    const src = el('div', 'src', `${todo.path}:${todo.line}`);
+    body.append(text, src);
+
+    if (todo.indent) row.style.paddingLeft = `${8 + todo.indent * 6}px`;
+    row.append(box, body);
+    list.append(row);
+  }
+}
+
+async function toggle(row, box) {
+  const payload = {
+    path: row.dataset.path,
+    line: Number(row.dataset.line),
+    raw_line: row.dataset.rawLine,
+    version: row.dataset.version,
+    done: box.checked,
+  };
+  row.classList.add('busy');
+  box.disabled = true;
+  try {
+    const resp = await fetch('/api/todos', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data?.error?.message || '写入失败');
+    row.remove();
+    const left = list.querySelectorAll('li').length;
+    summary.textContent = `未完成 ${left} 条`;
+    if (!left) list.append(el('li', 'empty', '没有未完成的待办，清静。'));
+  } catch (err) {
+    row.classList.remove('busy');
+    row.classList.add('failed');
+    box.disabled = false;
+    box.checked = !box.checked;
+    const note = el('div', 'error', String(err.message || err));
+    row.querySelector('.body').append(note);
+  }
+}
+
+async function boot() {
+  try {
+    const [todos, git] = await Promise.all([
+      fetch('/api/todos').then(r => r.json()),
+      fetch('/api/git/status').then(r => r.json()).catch(() => null),
+    ]);
+    render(todos.items || []);
+    if (git) {
+      document.getElementById('git').textContent = git.available
+        ? (git.last_commit ? `上次提交 ${git.last_commit.slice(0, 16).replace('T', ' ')}` : '尚无提交')
+        : '未检测到 git，版本历史未启用';
+    }
+  } catch (err) {
+    list.replaceChildren(el('li', 'error', '加载失败：' + err));
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
