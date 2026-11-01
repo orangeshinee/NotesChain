@@ -217,10 +217,18 @@ async fn read_file(State(st): State<Arc<AppState>>, AxumPath(path): AxumPath<Str
     let content = std::fs::read_to_string(&abs).map_err(ApiError::internal)?;
     let content = content.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(content);
     let mtime = mtime_ms(&abs);
+    let version = crate::index::version_of(mtime, &content);
+    let uses_crlf = content.contains("\r\n");
+    let normalized = if uses_crlf {
+        content.replace("\r\n", "\n")
+    } else {
+        content
+    };
     Ok(Json(json!({
         "path": st.relative(&abs),
-        "content": content,
-        "version": crate::index::version_of(mtime, &content),
+        "content": normalized,
+        "eol": if uses_crlf { "crlf" } else { "lf" },
+        "version": version,
     })))
 }
 
@@ -228,6 +236,9 @@ async fn read_file(State(st): State<Arc<AppState>>, AxumPath(path): AxumPath<Str
 struct SaveRequest {
     content: String,
     version: String,
+    /// 原文件行尾：lf / crlf（编辑器统一按 LF 编辑，保存时还原）
+    #[serde(default)]
+    eol: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -257,7 +268,12 @@ async fn save_file(
         ));
     }
 
-    todo_write::atomic_write(&abs, &body.content).map_err(ApiError::internal)?;
+    let outgoing = if body.eol.as_deref() == Some("crlf") {
+        body.content.replace('\n', "\r\n")
+    } else {
+        body.content.clone()
+    };
+    todo_write::atomic_write(&abs, &outgoing).map_err(ApiError::internal)?;
     st.git.notify();
     st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     st.index.write().await.upsert(&st.root, &rel).map_err(ApiError::internal)?;
@@ -416,9 +432,13 @@ async fn patch_todo(
     let original = lines.get(located).cloned().unwrap_or_default();
     lines[located] = todo_write::toggle_line(&original, body.done, &now);
 
+    let uses_crlf = content.contains("\r\n");
     let mut updated = lines.join("\n");
     if content.ends_with('\n') {
         updated.push('\n');
+    }
+    if uses_crlf {
+        updated = updated.replace('\n', "\r\n");
     }
 
     todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;

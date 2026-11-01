@@ -505,6 +505,7 @@ async function showFile(path, line) {
   }
 
   let version = data.version;
+  let eol = data.eol || 'lf';
   let dirty = false;
 
   const name = path.split('/').pop();
@@ -524,7 +525,7 @@ async function showFile(path, line) {
       const res = await api('/api/files/' + encodeURI(path) + (force ? '?force=true' : ''), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, version }),
+        body: JSON.stringify({ content, version, eol }),
       });
       version = res.version;
       dirty = false;
