@@ -14,6 +14,8 @@ const state = {
   todoStatus: 'open',
   duplicateNames: [],
   pathSet: new Set(),
+  tagSort: 'name',
+  todoTag: '',
   largeAssets: [],
   collapsedTags: new Set(),
   leafEls: new Map(),
@@ -306,7 +308,7 @@ async function showHome() {
   main.append(wrap);
   try {
     const [todos, git, schedule] = await Promise.all([
-      api('/api/todos?status=' + state.todoStatus + '&limit=' + state.todoLimit),
+      api('/api/todos?status=' + state.todoStatus + '&limit=' + state.todoLimit + (state.todoTag ? '&tag=' + encodeURIComponent(state.todoTag) : '')),
       api('/api/git/status').catch(() => null),
       api('/api/schedule?range=' + state.scheduleRange).catch(() => null),
     ]);
@@ -428,11 +430,35 @@ function buildSchedule(data) {
 
   return section;
 }
+function flattenTags(nodes, prefix, out) {
+  const result = out || [];
+  for (const node of nodes || []) {
+    const path = node.path || (prefix ? prefix + '/' + node.name : node.name);
+    result.push(path);
+    if (node.children && node.children.length) flattenTags(node.children, path, result);
+  }
+  return result;
+}
 function buildTodoSection(todos, onShowAll) {
   const section = el('section', 'todos-section');
   const head = el('div', 'section-head');
   head.append(el('h2', '', '待办'));
   head.append(el('span', 'muted', state.todoStatus === 'done' ? `${todos.total} 条已完成` : `${todos.total} 条未完成`));
+
+  const filter = el('select', 'todo-filter');
+  filter.append(el('option', '', '全部标签'));
+  filter.lastChild.value = '';
+  for (const tagPath of flattenTags((state.tags && state.tags.tree) || [])) {
+    const option = el('option', '', '#' + tagPath);
+    option.value = tagPath;
+    filter.append(option);
+  }
+  filter.value = state.todoTag || '';
+  filter.addEventListener('change', () => {
+    state.todoTag = filter.value;
+    showHome();
+  });
+  head.append(filter);
 
   const toggle = el('span', 'segmented');
   for (const [value, label] of [['open', '未完成'], ['done', '已完成'], ['all', '全部']]) {
@@ -1084,6 +1110,23 @@ function fileLeaf(path, label, todos) {
 
 function renderTagTree(nodes) {
   tagTree.replaceChildren();
+  const panelHead = document.querySelector('#tag-panel-head');
+  if (panelHead && !panelHead.querySelector('.mini')) {
+    const btn = el('button', 'mini', state.tagSort === 'todos' ? '按待办' : '按名称');
+    btn.type = 'button';
+    btn.title = '切换标签排序';
+    btn.addEventListener('click', () => {
+      state.tagSort = state.tagSort === 'todos' ? 'name' : 'todos';
+      btn.textContent = state.tagSort === 'todos' ? '按待办' : '按名称';
+      try {
+        localStorage.setItem('nc.tagSort', state.tagSort);
+      } catch (err) {
+        /* ignore */
+      }
+      renderTagTree(state.tags ? state.tags.tree : []);
+    });
+    panelHead.append(btn);
+  }
   if (!nodes || !nodes.length) {
     tagTree.append(el('div', 'empty-state', '还没有标签。'));
     return;
@@ -1127,7 +1170,17 @@ function renderTagTree(nodes) {
     }
   };
 
-  walk(nodes, 0, tagTree);
+  const sorter = (a, b) =>
+    state.tagSort === 'todos'
+      ? b.todos - a.todos || a.name.localeCompare(b.name)
+      : a.name.localeCompare(b.name);
+  const sortNodes = (list) =>
+    list
+      .slice()
+      .sort(sorter)
+      .map((node) => Object.assign({}, node, { children: node.children ? sortNodes(node.children) : [] }));
+
+  walk(sortNodes(nodes), 0, tagTree);
   document.getElementById('tag-count').textContent = String(nodes.length);
 }
 function markActive() {
@@ -1534,6 +1587,8 @@ document.addEventListener('click', (event) => {
 async function boot() {
   try {
     try {
+      const savedTagSort = localStorage.getItem('nc.tagSort');
+      if (savedTagSort) state.tagSort = savedTagSort;
       const savedRange = localStorage.getItem('nc.scheduleRange');
       if (savedRange) state.scheduleRange = savedRange;
     } catch (err) {
