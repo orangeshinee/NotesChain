@@ -14,7 +14,15 @@ if (-not (Test-Path $exe)) { throw "找不到可执行文件: $exe（先运行 c
 
 $notes = Join-Path $repo ".demo\smoke-notes"
 if (Test-Path $notes) { Remove-Item $notes -Recurse -Force }
-New-Item -ItemType Directory -Force -Path (Join-Path $notes "2026\11"), (Join-Path $notes "raw"), (Join-Path $notes "assets") | Out-Null
+
+# 日记必须落在「今天」，否则 /api/schedule 的当日断言会在跨天时失效
+$now = Get-Date
+$dateStr = $now.ToString('yyyy-MM-dd')
+$monthDir = '{0}\{1}' -f $now.Year, $now.ToString('MM')
+$relWin = '{0}\{1}.md' -f $monthDir, $dateStr
+$relPosix = '{0}/{1}/{2}.md' -f $now.Year, $now.ToString('MM'), $dateStr
+
+New-Item -ItemType Directory -Force -Path (Join-Path $notes $monthDir), (Join-Path $notes "raw"), (Join-Path $notes "assets") | Out-Null
 
 $diary = @'
 # 2026-11-01
@@ -41,7 +49,7 @@ SELECT 1;
 
 细节见 [[raw/KPI口径]]。
 '@
-Set-Content -Path (Join-Path $notes "2026\11\2026-11-01.md") -Value $diary -Encoding utf8
+Set-Content -LiteralPath (Join-Path $notes $relWin) -Value ($diary -replace '2026-11-01', $dateStr) -Encoding utf8
 Set-Content -Path (Join-Path $notes "raw\KPI口径.md") -Value "# KPI 口径`n`n- [ ] 对齐指标定义 #工作/供应链/KPI`n" -Encoding utf8
 
 # 1x1 png
@@ -91,7 +99,7 @@ try {
 
   "3. 日程"
   $sch = Invoke-RestMethod -Uri "$base/api/schedule?range=week" -WebSession $session
-  $day = $sch.days | Where-Object { $_.date -eq '2026-11-01' }
+  $day = $sch.days | Where-Object { $_.date -eq $dateStr }
   Check "当日日程 2 条" ($day.items.Count -eq 2) "实际 $($day.items.Count)"
   Check "未识别行进诊断区" ($day.unrecognized.Count -eq 1)
 
@@ -106,7 +114,7 @@ try {
   Check "状态过滤排除已完成" (-not ($srDone.items | Where-Object { $_.done })) "命中 $($srDone.total) 条"
 
   "6. 待办回写（三级定位）"
-  $file = Join-Path $notes "2026\11\2026-11-01.md"
+  $file = Join-Path $notes $relWin
   $text = Get-Content $file -Raw
   Set-Content -Path $file -Value ($text.Replace("## 待办`n", "## 待办`n`n外部插入的一行`n")) -NoNewline -Encoding utf8
   $target = (Invoke-RestMethod -Uri "$base/api/todos" -WebSession $session).items | Where-Object { $_.text -match '发供应链周报' }
@@ -118,11 +126,11 @@ try {
   Check "返回新行号" ($patched.line -gt 0)
 
   "7. 版本冲突"
-  $cur = Invoke-RestMethod -Uri "$base/api/files/$([uri]::EscapeDataString('2026/11/2026-11-01.md'))" -WebSession $session
+  $cur = Invoke-RestMethod -Uri "$base/api/files/$([uri]::EscapeDataString($relPosix))" -WebSession $session
   $save = @{ content = "改一下`n"; version = "0-0" } | ConvertTo-Json
-  $conflict = Invoke-WebRequest -Uri "$base/api/files/$([uri]::EscapeDataString('2026/11/2026-11-01.md'))" -Method Put -WebSession $session -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes($save)) -SkipHttpErrorCheck
+  $conflict = Invoke-WebRequest -Uri "$base/api/files/$([uri]::EscapeDataString($relPosix))" -Method Put -WebSession $session -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes($save)) -SkipHttpErrorCheck
   Check "旧版本号保存返回 409" ($conflict.StatusCode -eq 409)
-  $forced = Invoke-WebRequest -Uri "$base/api/files/$([uri]::EscapeDataString('2026/11/2026-11-01.md'))?force=true" -Method Put -WebSession $session -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes($save)) -SkipHttpErrorCheck
+  $forced = Invoke-WebRequest -Uri "$base/api/files/$([uri]::EscapeDataString($relPosix))?force=true" -Method Put -WebSession $session -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes($save)) -SkipHttpErrorCheck
   Check "force 覆盖返回 200" ($forced.StatusCode -eq 200)
 
   "8. 静态资源与路径防护"
@@ -134,7 +142,7 @@ try {
   Check "路径穿越 400" ($trav.StatusCode -eq 400)
 
   "9. 每日文件模板"
-  Remove-Item (Join-Path $notes "2026\11\2026-11-01.md") -Force
+  Remove-Item -LiteralPath (Join-Path $notes $relWin) -Force
   $daily = Invoke-RestMethod -Uri "$base/api/daily" -Method Post -WebSession $session
   Check "按模板新建当天文件" ($daily.created -eq $true -and $daily.content -match '## 日程' -and $daily.content -match '## 待办')
 }

@@ -49,7 +49,13 @@ if (-not $SkipBrowser) {
   "=== 6. 浏览器交互 ==="
   $gate = Join-Path $repo ".demo\gate-notes"
   if (Test-Path $gate) { Remove-Item $gate -Recurse -Force }
-  New-Item -ItemType Directory -Force -Path (Join-Path $gate "2026\11"), (Join-Path $gate "raw"), (Join-Path $gate "assets") | Out-Null
+  # 首页的「今天」跟着系统日期走，日记必须落在当天，否则跨午夜后 schedjump 会找不到可点日程
+  $now = Get-Date
+  $dateStr = $now.ToString('yyyy-MM-dd')
+  $monthDir = '{0}\{1}' -f $now.Year, $now.ToString('MM')
+  $relWin = '{0}\{1}.md' -f $monthDir, $dateStr
+  $relPosix = '{0}/{1}/{2}.md' -f $now.Year, $now.ToString('MM'), $dateStr
+  New-Item -ItemType Directory -Force -Path (Join-Path $gate $monthDir), (Join-Path $gate "raw"), (Join-Path $gate "assets") | Out-Null
   $diary = @'
 # 2026-11-01
 
@@ -67,7 +73,7 @@ if (-not $SkipBrowser) {
 
 链接：[[KPI口径]]
 '@
-  Set-Content (Join-Path $gate "2026\11\2026-11-01.md") $diary -Encoding utf8 -NoNewline
+  Set-Content -LiteralPath (Join-Path $gate $relWin) -Value ($diary -replace '2026-11-01', $dateStr) -Encoding utf8 -NoNewline
   Set-Content (Join-Path $gate "raw\KPI口径.md") "# KPI 口径`n`n- [ ] 对齐定义 #测试`n" -Encoding utf8 -NoNewline
   $png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
   [IO.File]::WriteAllBytes((Join-Path $gate "assets\pic.png"), [Convert]::FromBase64String($png))
@@ -85,7 +91,7 @@ if (-not $SkipBrowser) {
       Start-Sleep -Milliseconds 150
     }
     if (-not $token) { throw "服务未就绪" }
-    $hash = "#/file/" + [uri]::EscapeDataString("2026/11/2026-11-01.md")
+    $hash = "#/file/" + [uri]::EscapeDataString($relPosix)
     # 逐个场景跑（而不是 all）：一次长会话里跑全部时 Edge 偶发崩溃，逐场景更稳也更易定位
     $scenarios = @('hover','todo','autosave','conflict','search','tag','preview','virtual','clicks','quickadd','schedjump','export','schedadd','resize','tagtoggle','scrollkeep')
     $probeText = ''
