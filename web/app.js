@@ -598,7 +598,11 @@ function loadColWidths() {
   try {
     const raw = localStorage.getItem('nc.todoCols');
     const saved = raw ? JSON.parse(raw) : null;
-    return Array.isArray(saved) && saved.length === 4 ? saved : null;
+    if (!Array.isArray(saved)) return null;
+    if (saved.length === 5) return saved;
+    // 旧版 4 列（勾选/事项/文件/标签）→ 新 5 列（序号 + 原 4 列）
+    if (saved.length === 4) return ['46px', ...saved];
+    return null;
   } catch (err) {
     return null;
   }
@@ -737,7 +741,7 @@ function buildTodoTable(items) {
   let rendered = 0;
   const sentinel = el('tr', 'sentinel');
   const sentinelCell = el('td');
-  sentinelCell.colSpan = 4;
+  sentinelCell.colSpan = 5;
   sentinel.append(sentinelCell);
 
   const appendChunk = () => {
@@ -791,7 +795,7 @@ async function toggleTodo(tr, box) {
     tr.classList.add('failed');
     box.disabled = false;
     box.checked = !box.checked;
-    tr.querySelector('td:nth-child(2)').append(el('div', 'notice', String(err.message || err)));
+    tr.querySelector('td:nth-child(3)').append(el('div', 'notice', String(err.message || err)));
   }
 }
 

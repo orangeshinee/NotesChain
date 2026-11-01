@@ -112,7 +112,7 @@ class TableWidget extends WidgetType {
     this.pos = typeof pos === 'number' ? pos : 0;
   }
   eq(other) {
-    return other.html === this.html;
+    return other.html === this.html && other.pos === this.pos;
   }
   toDOM(view) {
     const wrap = document.createElement('div');

@@ -709,7 +709,7 @@ pre.patch { font-size: 12.5px; line-height: 1.62; }
   .doc-head { padding: 0 var(--sp-4); }
   .wrap { padding: var(--sp-4) var(--sp-4) 120px; }
   table.todos th:nth-child(3), table.todos td:nth-child(3) { width: 40%; }
-  table.todos th:nth-child(4), table.todos td:nth-child(4) { display: none; }
+  table.todos th:nth-child(5), table.todos td:nth-child(5) { display: none; }
 }
 
 /* 标签树折叠 */

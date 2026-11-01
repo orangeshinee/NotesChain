@@ -370,7 +370,7 @@ try {
     $js = @'
 (() => {
   const handle = document.querySelector('.col-resizer');
-  const col = document.querySelector('table.todos col:nth-child(2)');
+  const col = document.querySelector('table.todos col:nth-child(3)');
   if (!handle || !col) return 'no-handle';
   const before = Math.round(col.getBoundingClientRect().width);
   const r = handle.getBoundingClientRect();
