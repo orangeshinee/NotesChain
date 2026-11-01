@@ -1131,3 +1131,6 @@ button.seg.danger:hover { border-color: #b42318; }
 }
 .tag-node:hover .tag-open { opacity: 1; text-decoration: underline; }
 .tag-node .n { margin-left: auto; }
+
+/* 关闭浏览器滚动锚定，滚动位置由脚本接管，避免重渲时跳顶 */
+.main { overflow-anchor: none; }

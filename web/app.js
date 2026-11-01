@@ -361,7 +361,12 @@ async function refreshTodoSection() {
       showHome();
     });
     section.replaceWith(fresh);
+    // 两帧后再恢复，等浏览器完成排版，避免被钳到 0
+    await new Promise((resolve) => requestAnimationFrame(resolve));
     main.scrollTop = scroll;
+    requestAnimationFrame(() => {
+      main.scrollTop = scroll;
+    });
   } catch (err) {
     /* 保持原样 */
   }

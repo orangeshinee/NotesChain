@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "clicks", "tagtoggle", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "clicks", "tagtoggle", "scrollkeep", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [int]$DebugPort = 9333
@@ -239,6 +239,25 @@ try {
 })()
 '@
     $results += "tagtoggle => " + (Eval-Js $ws $js)
+  }
+
+  if (& $want "scrollkeep") {
+    Reload-Page $ws ($Url + "#/")
+    $js = @'
+(async () => {
+  const main = document.querySelector('.main');
+  main.scrollTop = 600;
+  await new Promise((r) => setTimeout(r, 200));
+  const before = main.scrollTop;
+  const sel = Array.from(document.querySelectorAll('.todo-filter')).find((s) => s.tagName === 'SELECT' && Array.from(s.options).some((o) => o.textContent.includes('按优先级')));
+  if (!sel) return 'no-sort-select';
+  sel.value = 'priority';
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 900));
+  return JSON.stringify({ before, after: main.scrollTop });
+})()
+'@
+    $results += "scrollkeep => " + (Eval-Js $ws $js)
   }
 
   if (& $want "preview") {
