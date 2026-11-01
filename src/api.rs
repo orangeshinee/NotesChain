@@ -1144,45 +1144,77 @@ async fn git_restore(
     if !body.path.ends_with(".md") {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "只支持恢复 .md 文件"));
     }
-    // 前端传的是 diff 里的仓库相对路径（可能带 notes/ 前缀），统一剥成 notes 相对
+    // 前端可能传三种路径：仓库相对（含 repo→notes 完整前缀）、项目根相对（notes/...）、
+    // notes 根相对（2026/11/...）。逐个候选尝试 `git show <hash>:<repo 相对>`，第一个成功的为准。
+    let path_clean = body.path.trim().trim_start_matches('/').replace('\\', "/");
+    let repo_to_root = st
+        .root
+        .strip_prefix(&repo)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
     let notes_prefix = st
         .notes_root
         .strip_prefix(&st.root)
         .map(|p| p.to_string_lossy().replace('\\', "/"))
         .unwrap_or_default();
-    let mut rel_in_notes = body.path.trim().trim_start_matches('/').to_string();
-    if !notes_prefix.is_empty() {
-        if let Some(rest) = rel_in_notes.strip_prefix(&format!("{notes_prefix}/")) {
-            rel_in_notes = rest.to_string();
-        }
-    }
-    let abs = st.resolve(&rel_in_notes).map_err(ApiError::bad_path)?;
-    let rel = abs
+    let full_prefix = st
+        .notes_root
         .strip_prefix(&repo)
         .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .map_err(|_| ApiError::bad_path("文件不在仓库内"))?;
+        .unwrap_or_default();
+
+    let mut candidates: Vec<String> = Vec::new();
+    if !full_prefix.is_empty() {
+        if let Some(rest) = path_clean.strip_prefix(&format!("{full_prefix}/")) {
+            candidates.push(rest.to_string());
+        }
+    }
+    if !repo_to_root.is_empty() {
+        if let Some(rest) = path_clean.strip_prefix(&format!("{repo_to_root}/")) {
+            candidates.push(rest.to_string());
+            if !notes_prefix.is_empty() {
+                if let Some(inner) = rest.strip_prefix(&format!("{notes_prefix}/")) {
+                    candidates.push(inner.to_string());
+                }
+            }
+        }
+    }
+    if !notes_prefix.is_empty() {
+        if let Some(rest) = path_clean.strip_prefix(&format!("{notes_prefix}/")) {
+            candidates.push(rest.to_string());
+        }
+    }
+    candidates.push(path_clean.clone());
 
     let hash = body.hash.clone();
-    let spec = format!("{hash}:{rel}");
-    let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("git")
-            .args(["show", &spec])
-            .current_dir(&repo)
-            .output()
-    })
-    .await
-    .map_err(ApiError::internal)?
-    .map_err(ApiError::internal)?;
-
-    if !output.status.success() {
+    let mut found: Option<(std::path::PathBuf, String)> = None;
+    for cand in candidates {
+        let Ok(abs) = st.resolve(&cand) else { continue };
+        let Ok(rel) = abs.strip_prefix(&repo) else { continue };
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        let spec = format!("{hash}:{rel_str}");
+        let repo_clone = repo.clone();
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("git")
+                .args(["show", &spec])
+                .current_dir(&repo_clone)
+                .output()
+        })
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::internal)?;
+        if output.status.success() {
+            found = Some((abs, String::from_utf8_lossy(&output.stdout).to_string()));
+            break;
+        }
+    }
+    let Some((abs, content)) = found else {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
             "not_found",
             "该提交里没有这个文件",
         ));
-    }
-    let content = String::from_utf8_lossy(&output.stdout).to_string();
-
+    };
     let rel_path = st.relative(&abs);
     let lock = st.lock_for(&rel_path).await;
     let _guard = lock.lock().await;

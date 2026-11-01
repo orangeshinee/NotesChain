@@ -530,6 +530,13 @@ export function create(opts) {
   });
 
 
+  // 调试/自动化句柄：浏览器探针用它驱动输入（不影响正常使用）
+  try {
+    window.__ncView = view;
+  } catch (err) {
+    /* ignore */
+  }
+
   return {
     view,
     getValue: () => view.state.doc.toString(),

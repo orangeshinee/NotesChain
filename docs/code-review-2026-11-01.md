@@ -260,3 +260,9 @@ fs.mkdirSync(root, { recursive: true });
 | M7 | ✅ | `git commit` 带 pathspec（仅限笔记目录），不再连带父仓库已暂存内容 |
 | L2 | ✅ | 日程段标题优先写 `## 日程`，老文件 `## 今日日程` 也能识别并复用 |
 | 其余 M4/M8~M11、L1/L3/L4 | ⬜ | 未处理（体验类/低风险），留待后续 |
+
+### 复审跟进（同日）
+
+- **H1（复审发现 P0 死锁）**：原实现 `doSave` 完成后 `return flush(false)`，会把新 `.then` 追加到**包含自己**的同一条链上，Promise 永不结算。已改为 `doSave` 内部 `for` 循环直到 `!isDirty()`，不再回调 `flush()`。
+- **H7（复审发现嵌套仓库失效）**：原来只剥 `notes/`，未剥 `repo_root→root` 前缀。现在按「仓库相对 / 项目根相对 / notes 相对」生成候选路径，逐个 `git show` 试。实测嵌套仓库 `.demo/nest`（repo 在上一层）恢复 `inner/notes/raw/a.md` → 200。
+- **补充**：`onToggleTodo` 现在检查 `flush` 返回值，冲突时不继续 PATCH；`release-gate` 增加「探针非零退出即 FAIL」。

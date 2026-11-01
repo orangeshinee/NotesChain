@@ -88,6 +88,9 @@ if (-not $SkipBrowser) {
     $probeText = $probeOut -join "`n"
     $probeCode = $LASTEXITCODE
     $checks = [regex]::Matches($probeText, '(\w[\w-]*) => (.*)')
+    if ($probeCode -ne 0) {
+      Record "浏览器探针（非零退出）" $false "probe exit=$probeCode"
+    }
     if ($checks.Count -eq 0) {
       Record "浏览器探针（无断言）" $false "probe exit=$probeCode，输出无任何 '场景 => 结果'；视为失败"
     }

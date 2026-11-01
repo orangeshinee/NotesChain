@@ -977,55 +977,59 @@ async function showFile(path, line) {
 
   const doSave = async (force = false) => {
     if (!currentEditor) return true;
-    const content = currentText();
-    if (!force && content === lastSaved) return true;
-    setStatus(status, 'saving', '保存中…');
-    try {
-      const res = await api('/api/files/' + encodeURI(path) + (force ? '?force=true' : ''), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, version, eol }),
-      });
-      version = res.version;
-      setSaved(content);
-      // 保存期间用户又输入了 → 继续保存，保证「已保存」等于磁盘包含全部输入
-      if (isDirty()) return flush(false);
-      return true;
-    } catch (err) {
-      if (err.code === 'conflict') {
-        try {
-          const fresh = await api('/api/files/' + encodeURI(path));
-          if (fresh.content === content) {
-            version = fresh.version;
-            setSaved(content);
-            return true;
-          }
-        } catch (e) {
-          /* 读不到就按真冲突处理 */
-        }
-        setStatus(status, 'conflict', '有冲突');
-        showConflict(wrap, {
-          onReload: async () => {
-            try {
-              const fresh = await api('/api/files/' + encodeURI(path));
-              version = fresh.version;
-              suppressChange = true;
-              currentEditor.setValue(fresh.content);
-              setSaved(fresh.content);
-            } catch (e) {
-              setStatus(status, 'conflict', '重新加载失败');
-            }
-          },
-          onOverwrite: () => flush(true),
+    // 用循环而不是「回调 flush」：回调会把新的 then 追加到当前所在的同一条链上，
+    // 形成自引用，Promise 永不结算（保存死锁）。
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const content = currentText();
+      if (!force && content === lastSaved) return true;
+      setStatus(status, 'saving', '保存中…');
+      try {
+        const res = await api('/api/files/' + encodeURI(path) + (force ? '?force=true' : ''), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content, version, eol }),
         });
+        version = res.version;
+        setSaved(content);
+      } catch (err) {
+        if (err.code === 'conflict') {
+          try {
+            const fresh = await api('/api/files/' + encodeURI(path));
+            if (fresh.content === content) {
+              version = fresh.version;
+              setSaved(content);
+              if (!isDirty()) return true;
+              continue;
+            }
+          } catch (e) {
+            /* 读不到就按真冲突处理 */
+          }
+          setStatus(status, 'conflict', '有冲突');
+          showConflict(wrap, {
+            onReload: async () => {
+              try {
+                const fresh = await api('/api/files/' + encodeURI(path));
+                version = fresh.version;
+                suppressChange = true;
+                currentEditor.setValue(fresh.content);
+                setSaved(fresh.content);
+              } catch (e) {
+                setStatus(status, 'conflict', '重新加载失败');
+              }
+            },
+            onOverwrite: () => flush(true),
+          });
+          return false;
+        }
+        setStatus(status, 'conflict', '保存失败');
+        showConflict(wrap, { message: String(err.message || err) });
         return false;
       }
-      setStatus(status, 'conflict', '保存失败');
-      showConflict(wrap, { message: String(err.message || err) });
-      return false;
+      force = false;
+      if (!isDirty()) return true;
     }
+    return false;
   };
-
   // 所有保存串成一条链：导航前 await 它，就能保证最后一次输入也落了盘
   const flush = (force = false) => {
     saveChain = saveChain.then(() => doSave(force)).catch(() => false);
@@ -1072,7 +1076,8 @@ async function showFile(path, line) {
     },
     onToggleTodo: async (info) => {
       // 先把正文改动落盘（否则 PATCH 之后整篇保存会把完成标记覆盖掉）
-      await flush(false);
+      const flushed = await flush(false);
+      if (flushed === false) return; // 正文没存成功（冲突），不要继续改文件
       const res = await api('/api/todos', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
