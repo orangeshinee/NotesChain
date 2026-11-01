@@ -36,6 +36,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/daily", post(ensure_daily))
         .route("/api/index/rebuild", post(rebuild_index))
         .route("/api/git/status", get(git_status))
+        .route("/api/git/log", get(git_log))
+        .route("/api/git/show", get(git_show))
         .route("/app.js", get(app_js))
         .route("/style.css", get(style_css))
         .route("/editor.js", get(editor_js))
@@ -376,6 +378,111 @@ async fn git_status(State(st): State<Arc<AppState>>) -> Json<Value> {
     Json(serde_json::to_value(status).unwrap_or_else(|_| json!({ "available": false })))
 }
 
+// ---------------------------------------------------------------- Git 历史
+
+#[derive(Deserialize)]
+struct LogParams {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+fn scoped_repo(st: &AppState) -> Option<(PathBuf, String)> {
+    let repo = st.git.repo_root.clone()?;
+    let rel = st
+        .root
+        .strip_prefix(&repo)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let rel = if rel.is_empty() { ".".to_string() } else { rel };
+    Some((repo, rel))
+}
+
+async fn git_log(State(st): State<Arc<AppState>>, Query(p): Query<LogParams>) -> Result<Json<Value>, ApiError> {
+    let Some((repo, rel)) = scoped_repo(&st) else {
+        return Ok(Json(json!({ "available": false, "commits": [] })));
+    };
+    let limit = p.limit.unwrap_or(80).min(500);
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args([
+                "log",
+                &format!("-n{limit}"),
+                "--format=%H%x1f%cI%x1f%s",
+                "--",
+                &rel,
+            ])
+            .current_dir(&repo)
+            .output()
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::internal)?;
+
+    if !output.status.success() {
+        return Ok(Json(json!({
+            "available": false,
+            "reason": String::from_utf8_lossy(&output.stderr).trim(),
+            "commits": [],
+        })));
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut commits = Vec::new();
+    for line in text.lines() {
+        let mut parts = line.splitn(3, '\u{1f}');
+        let (Some(hash), Some(iso), Some(subject)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let time = chrono::DateTime::parse_from_rfc3339(iso)
+            .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|_| iso.to_string());
+        commits.push(json!({
+            "hash": hash,
+            "short": &hash[..hash.len().min(8)],
+            "time": time,
+            "subject": subject,
+        }));
+    }
+
+    Ok(Json(json!({ "available": true, "commits": commits })))
+}
+
+#[derive(Deserialize)]
+struct ShowParams {
+    hash: String,
+}
+
+async fn git_show(State(st): State<Arc<AppState>>, Query(p): Query<ShowParams>) -> Result<Json<Value>, ApiError> {
+    let Some((repo, rel)) = scoped_repo(&st) else {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "git_unavailable", "未启用 git"));
+    };
+    if p.hash.len() < 4 || !p.hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "非法的提交号"));
+    }
+    let hash = p.hash.clone();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["show", "--format=", "--patch", "--no-color", &hash, "--", &rel])
+            .current_dir(&repo)
+            .output()
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::internal)?;
+
+    if !output.status.success() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+
+    Ok(Json(json!({
+        "hash": p.hash,
+        "patch": String::from_utf8_lossy(&output.stdout).to_string(),
+    })))
+}
 // ---------------------------------------------------------------- 日程
 
 #[derive(Deserialize)]

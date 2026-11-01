@@ -218,6 +218,51 @@ body {
 .doc .link-ph { color: var(--accent); border-bottom: 1px solid var(--line); }
 .doc .ln-highlight { background: var(--mark); border-radius: 3px; }
 
+/* ---------------- 快捷导航 / 历史 ---------------- */
+.quicknav { display: flex; gap: 6px; padding: 0 12px 8px; }
+.quick {
+  font-size: 12.5px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+.quick:hover { background: rgba(127,127,127,.1); color: var(--fg); }
+.history-list { list-style: none; margin: 0; padding: 0; }
+.history-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.history-list li:hover { background: rgba(127,127,127,.06); }
+.history-list .time {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  flex: none;
+  min-width: 118px;
+}
+.history-list .subject { flex: 1; font-size: 13.5px; }
+.history-list .hash {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+pre.patch {
+  background: var(--code-bg);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 12.8px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre;
+}
 /* ---------------- 编辑器 ---------------- */
 .editor-host { min-height: 60vh; }
 .editor-host .cm-editor { outline: none; }

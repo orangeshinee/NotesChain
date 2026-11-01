@@ -863,6 +863,8 @@ async function route() {
   }
   if (raw.startsWith('/search/')) return showSearch(decodeURIComponent(raw.slice(8)));
   if (raw.startsWith('/tag/')) return showTag(decodeURIComponent(raw.slice(5)));
+  if (raw.startsWith('/history')) return showHistory();
+  if (raw.startsWith('/commit/')) return showCommit(raw.slice(8));
   return showHome();
 }
 
@@ -878,6 +880,56 @@ searchInput.addEventListener('input', () => {
 
 window.addEventListener('hashchange', route);
 
+// ---------------------------------------------------------------- 历史
+
+async function showHistory() {
+  state.activePath = null;
+  state.activeTag = null;
+  markActive();
+  main.replaceChildren(docHead('历史', ''));
+  const wrap = el('div', 'wrap');
+  wrap.append(loadingState('读取提交历史…'));
+  main.append(wrap);
+  try {
+    const data = await api('/api/git/log?limit=100');
+    if (!data.available) {
+      wrap.replaceChildren(el('div', 'empty-state', data.reason || '未启用 git，没有版本历史。'));
+      return;
+    }
+    const list = el('ul', 'history-list');
+    for (const commit of data.commits) {
+      const li = el('li');
+      li.append(el('span', 'time', commit.time));
+      li.append(el('span', 'subject', commit.subject));
+      li.append(el('span', 'hash', commit.short));
+      li.addEventListener('click', () => go('/commit/' + commit.hash));
+      list.append(li);
+    }
+    if (!data.commits.length) wrap.replaceChildren(el('div', 'empty-state', '还没有提交。'));
+    else wrap.replaceChildren(list);
+    main.replaceChildren(docHead('历史', `${data.commits.length} 条`, ''), wrap);
+  } catch (err) {
+    wrap.replaceChildren(errorState(err));
+  }
+}
+
+async function showCommit(hash) {
+  state.activePath = null;
+  markActive();
+  main.replaceChildren(docHead('提交', ''));
+  const wrap = el('div', 'wrap');
+  wrap.append(loadingState('读取 diff…'));
+  main.append(wrap);
+  try {
+    const data = await api('/api/git/show?hash=' + encodeURIComponent(hash));
+    const pre = el('pre', 'patch');
+    pre.textContent = data.patch || '（该提交没有文本差异）';
+    wrap.replaceChildren(pre);
+    main.replaceChildren(docHead('提交', hash.slice(0, 8), ''), wrap);
+  } catch (err) {
+    wrap.replaceChildren(errorState(err));
+  }
+}
 // ---------------------------------------------------------------- 外部改动轮询
 
 let lastRevision = null;
