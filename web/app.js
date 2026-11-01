@@ -7,6 +7,7 @@ const state = {
   activeTag: null,
   searchStatus: 'all',
   scheduleRange: 'week',
+  links: false,
   leafEls: new Map(),
 };
 
@@ -535,16 +536,16 @@ async function showFile(path, line) {
   const assetFor = (p) =>
     '/api/asset?path=' + encodeURIComponent(p) + '&from=' + encodeURIComponent(path);
 
-  currentEditor = makeEditor(
-    host,
-    data.content,
-    scheduleSave,
-    () => {
+  currentEditor = makeEditor(host, data.content, {
+    onChange: scheduleSave,
+    onSave: () => {
       clearTimeout(saveTimer);
       flush(false);
     },
     assetFor,
-    async (info) => {
+    links: state.links,
+    onOpenLink: openLink,
+    onToggleTodo: async (info) => {
       // 编辑器里点待办复选框：直接按行回写，不走整文件保存
       const res = await api('/api/todos', {
         method: 'PATCH',
@@ -555,15 +556,16 @@ async function showFile(path, line) {
       dirty = false;
       clearTimeout(saveTimer);
       setStatus(status, 'saved', '已保存 ' + timeNow());
-    }
-  );
+    },
+  });
   currentEditor.focus();
   if (line) scrollToLine(line);
 }
 
-function makeEditor(host, content, onChange, onSave, assetFor, onToggleTodo) {
+function makeEditor(host, content, options) {
+  const { onChange, onSave } = options;
   if (window.NotesChainEditor && typeof window.NotesChainEditor.create === 'function') {
-    return window.NotesChainEditor.create({ parent: host, doc: content, onChange, onSave, assetFor, onToggleTodo });
+    return window.NotesChainEditor.create(Object.assign({ parent: host, doc: content }, options));
   }
   const area = document.createElement('textarea');
   area.className = 'editor-fallback';
@@ -880,6 +882,30 @@ searchInput.addEventListener('input', () => {
 
 window.addEventListener('hashchange', route);
 
+async function openLink(target) {
+  const clean = String(target || '').trim();
+  if (!clean) return;
+  const path = clean.includes('/')
+    ? (/\.md$/.test(clean) ? clean : clean + '.md')
+    : 'raw/' + clean + '.md';
+  try {
+    await api('/api/files/' + encodeURI(path));
+    go('/file/' + encodeURIComponent(path));
+  } catch (err) {
+    if (!window.confirm(`「${path}」还不存在，要新建吗？`)) return;
+    try {
+      await api('/api/files/' + encodeURI(path) + '?force=true', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: '', version: '' }),
+      });
+      await loadSidebar();
+      go('/file/' + encodeURIComponent(path));
+    } catch (e) {
+      window.alert('新建失败：' + (e.message || e));
+    }
+  }
+}
 // ---------------------------------------------------------------- 历史
 
 async function showHistory() {
@@ -973,6 +999,8 @@ async function refreshFromDisk() {
 
 async function boot() {
   try {
+    const cfg = await api('/api/config').catch(() => null);
+    if (cfg) state.links = !!cfg.links;
     await loadSidebar();
     setGit(await api('/api/git/status').catch(() => null));
   } catch (err) {

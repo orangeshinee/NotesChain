@@ -32,6 +32,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/search", get(search))
         .route("/api/schedule", get(schedule_view))
         .route("/api/revision", get(revision))
+        .route("/api/config", get(config))
         .route("/api/asset", get(asset))
         .route("/api/daily", post(ensure_daily))
         .route("/api/index/rebuild", post(rebuild_index))
@@ -267,6 +268,9 @@ async fn save_file(
 
 // ---------------------------------------------------------------- 待办
 
+async fn config(State(st): State<Arc<AppState>>) -> Json<Value> {
+    Json(json!({ "links": st.links }))
+}
 async fn revision(State(st): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({ "revision": st.revision.load(std::sync::atomic::Ordering::SeqCst) }))
 }

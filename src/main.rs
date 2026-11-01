@@ -26,12 +26,16 @@ struct Args {
     /// 监听端口（只绑 127.0.0.1）
     #[arg(long, default_value_t = 8080)]
     port: u16,
+
+    /// 启用双链 [[目标]]（实验性，PRD 3.5 默认关闭）
+    #[arg(long, default_value_t = false)]
+    links: bool,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let state = state::AppState::new(args.dir)?;
+    let state = state::AppState::new(args.dir, args.links)?;
 
     let warnings = state.rebuild_index().await?;
     watch::start(state.clone());

@@ -55,6 +55,33 @@ function nowStamp() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 双链 [[目标]]（PRD 3.5，默认关闭） */
+let openLinkHandler = null;
+
+class WikiLinkWidget extends WidgetType {
+  constructor(target) {
+    super();
+    this.target = target;
+  }
+  eq(other) {
+    return other.target === this.target;
+  }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'cm-wikilink';
+    span.textContent = this.target;
+    span.title = '[[' + this.target + ']]';
+    span.addEventListener('mousedown', (e) => e.preventDefault());
+    span.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (openLinkHandler) openLinkHandler(this.target);
+    });
+    return span;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
 /** 待办复选框 */
 class CheckboxWidget extends WidgetType {
   constructor(checked, pos) {
@@ -138,7 +165,7 @@ async function toggleTask(view, pos) {
   }
 }
 
-function buildDecorations(view, assetFor) {
+function buildDecorations(view, assetFor, linksEnabled) {
   const builder = new RangeSetBuilder();
   const activeLines = new Set();
   for (const range of view.state.selection.ranges) {
@@ -181,6 +208,14 @@ function buildDecorations(view, assetFor) {
           );
         }
 
+        // 双链
+        if (linksEnabled) {
+          for (const m of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) {
+            const start = line.from + m.index;
+            builder.add(start, start + m[0].length, Decoration.replace({ widget: new WikiLinkWidget(m[1].trim()) }));
+          }
+        }
+
         // 其余语法符号淡出
         for (const m of text.matchAll(/(\*\*|__|\*|_|`+|~~|^#{1,6}\s)/g)) {
           const start = line.from + m.index;
@@ -194,16 +229,16 @@ function buildDecorations(view, assetFor) {
   return builder.finish();
 }
 
-function livePreviewExtension(assetFor, onToggleTodo) {
+function livePreviewExtension(assetFor, onToggleTodo, linksEnabled) {
   class LivePreviewPlugin {
     constructor(view) {
       this.view = view;
       view.__ncOnToggle = onToggleTodo || null;
-      this.decorations = buildDecorations(view, assetFor);
+      this.decorations = buildDecorations(view, assetFor, linksEnabled);
     }
     update(update) {
       if (update.docChanged || update.viewportChanged || update.selectionSet) {
-        this.decorations = buildDecorations(update.view, assetFor);
+        this.decorations = buildDecorations(update.view, assetFor, linksEnabled);
       }
     }
   }
@@ -214,7 +249,8 @@ function livePreviewExtension(assetFor, onToggleTodo) {
  * @param {{parent: HTMLElement, doc: string, onChange?: Function, onSave?: Function, onToggleTodo?: Function, assetFor?: (path:string)=>string}} opts
  */
 export function create(opts) {
-  const { parent, doc, onChange, onSave, onToggleTodo, assetFor } = opts;
+  const { parent, doc, onChange, onSave, onToggleTodo, assetFor, links, onOpenLink } = opts;
+  openLinkHandler = onOpenLink || null;
   const view = new EditorView({
     parent,
     state: EditorState.create({
@@ -226,7 +262,7 @@ export function create(opts) {
         EditorView.lineWrapping,
         markdown({ base: markdownLanguage, addKeymap: true }),
         syntaxHighlighting(highlight),
-        livePreviewExtension(assetFor || ((p) => p), onToggleTodo),
+        livePreviewExtension(assetFor || ((p) => p), onToggleTodo, !!links),
         theme,
         keymap.of([
           {

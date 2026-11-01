@@ -21,12 +21,14 @@ pub struct AppState {
     pub git: Arc<Git>,
     /// 索引修订号：外部改动后自增，前端轮询它决定是否刷新
     pub revision: std::sync::atomic::AtomicU64,
+    /// 双链开关（PRD 3.5：默认关闭）
+    pub links: bool,
     /// 按文件串行化写入（PRD 5.3 第 7 条）
     file_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl AppState {
-    pub fn new(root: PathBuf) -> anyhow::Result<Arc<Self>> {
+    pub fn new(root: PathBuf, links: bool) -> anyhow::Result<Arc<Self>> {
         let root = root
             .canonicalize()
             .with_context(|| format!("笔记目录不可访问: {}", root.display()))?;
@@ -43,6 +45,7 @@ impl AppState {
             index: RwLock::new(Index::default()),
             git,
             revision: std::sync::atomic::AtomicU64::new(0),
+            links,
             file_locks: Mutex::new(HashMap::new()),
         }))
     }
@@ -129,7 +132,7 @@ mod tests {
     use super::*;
 
     fn state_for(dir: &Path) -> Arc<AppState> {
-        AppState::new(dir.to_path_buf()).unwrap()
+        AppState::new(dir.to_path_buf(), false).unwrap()
     }
 
     #[test]
