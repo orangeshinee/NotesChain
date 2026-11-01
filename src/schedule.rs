@@ -127,6 +127,41 @@ fn take_time(s: &str) -> Option<(String, &str)> {
     Some((s[0..5].to_string(), &s[5..]))
 }
 
+/// 疑似日程：不在 `## 今日日程` 段内、但行首像时间的行（PRD 3.3 兜底 2）。
+pub fn suspected_outside_section(content: &str) -> Vec<usize> {
+    let lines: Vec<&str> = content.lines().collect();
+    let flags = crate::markdown::code_block_flags(&lines);
+    let mut inside = false;
+    let mut out = Vec::new();
+
+    for (idx, line) in lines.iter().enumerate() {
+        if flags[idx] {
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            let level = trimmed.chars().take_while(|c| *c == '#').count();
+            let title = trimmed.trim_start_matches('#').trim();
+            if level == 2 && title == "今日日程" {
+                inside = true;
+                continue;
+            }
+            if inside && level <= 2 {
+                inside = false;
+            }
+            continue;
+        }
+        if inside || trimmed.is_empty() {
+            continue;
+        }
+        let body = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim_start();
+        if take_time(body).is_some() {
+            out.push(idx + 1);
+        }
+    }
+
+    out
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,6 +181,23 @@ mod tests {
 - [ ] 15:00 这条在待办段里，不算日程
 ";
 
+    #[test]
+    fn suspects_time_lines_outside_section() {
+        let doc = "\
+# 2026-11-01
+
+## 今日日程
+
+- 09:30-10:00 晨会
+
+## 记录
+
+- 15:00 这行像日程但不在日程段里
+- 普通一行
+";
+        let hits = suspected_outside_section(doc);
+        assert_eq!(hits, vec![9]);
+    }
     #[test]
     fn parses_items_and_unknown() {
         let s = parse(DOC);

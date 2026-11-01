@@ -41,6 +41,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/git/show", get(git_show))
         .route("/api/git/restore", post(git_restore))
         .route("/api/backlinks", get(backlinks))
+        .route("/api/links", get(outgoing_links))
         .route("/api/migration/todo", get(migration_todos))
         .route("/app.js", get(app_js))
         .route("/style.css", get(style_css))
@@ -325,6 +326,8 @@ async fn config(State(st): State<Arc<AppState>>) -> Json<Value> {
         "links": st.links,
         "duplicateNames": conflicts,
         "largeAssets": big_files,
+        "syncDrive": detect_sync_drive(&st.root),
+        "root": st.root.display().to_string(),
     }))
 }
 
@@ -632,6 +635,74 @@ async fn git_show(State(st): State<Arc<AppState>>, Query(p): Query<ShowParams>) 
         "patch": String::from_utf8_lossy(&output.stdout).to_string(),
     })))
 }
+/// 常见同步盘目录检测（PRD 6.4：同步盘内启用 Git 自动提交有风险）
+fn detect_sync_drive(root: &std::path::Path) -> Option<&'static str> {
+    let path = root.to_string_lossy().to_lowercase();
+    let rules = [
+        ("onedrive", "OneDrive"),
+        ("dropbox", "Dropbox"),
+        ("google drive", "Google Drive"),
+        ("google 云端硬盘", "Google Drive"),
+        ("坚果云", "坚果云"),
+        ("nutstore", "坚果云"),
+        ("baidunetdisk", "百度网盘"),
+        ("baidu", "百度网盘"),
+        ("icloud", "iCloud"),
+        ("synology", "Synology Drive"),
+    ];
+    for (needle, name) in rules {
+        if path.contains(needle) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+#[derive(Deserialize)]
+struct LinksParams {
+    path: String,
+}
+
+/// 出链（PRD 7.3，P1）：某文件里出现的双链及解析结果
+async fn outgoing_links(
+    State(st): State<Arc<AppState>>,
+    Query(p): Query<LinksParams>,
+) -> Json<Value> {
+    let index = st.index.read().await;
+    let Some(file) = index.files.iter().find(|f| f.path == p.path) else {
+        return Json(json!({ "path": p.path, "total": 0, "items": [] }));
+    };
+    let ambiguous: std::collections::BTreeSet<String> = index
+        .duplicate_raw_names()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let dir = file.path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+
+    let lines: Vec<&str> = file.content.lines().collect();
+    let flags = crate::markdown::code_block_flags(&lines);
+    let mut items = Vec::new();
+    for (idx, line) in lines.iter().enumerate() {
+        if flags[idx] {
+            continue;
+        }
+        for cap in wikilink_iter(line) {
+            let resolved = resolve_wikilink(&cap, dir, &ambiguous);
+            let exists = !resolved.is_empty()
+                && index
+                    .files
+                    .iter()
+                    .any(|f| f.path == format!("{resolved}.md"));
+            items.push(json!({
+                "target": cap,
+                "resolved": if exists { json!(resolved) } else { Value::Null },
+                "line": idx + 1,
+            }));
+        }
+    }
+
+    Json(json!({ "path": p.path, "total": items.len(), "items": items }))
+}
 // ---------------------------------------------------------------- 回滚 / 反向链接
 
 #[derive(Deserialize)]
@@ -853,6 +924,11 @@ async fn schedule_view(
         match entry {
             Some(file) => {
                 let section = crate::schedule::parse(&file.content);
+                let suspected = if is_today {
+                    crate::schedule::suspected_outside_section(&file.content)
+                } else {
+                    Vec::new()
+                };
                 days.push(json!({
                     "date": date,
                     "weekday": weekday_cn(cursor),
@@ -860,6 +936,7 @@ async fn schedule_view(
                     "path": file.path,
                     "items": section.items,
                     "unrecognized": section.unrecognized,
+                    "suspected": suspected,
                 }));
             }
             None if is_today => {
@@ -1187,4 +1264,17 @@ fn mtime_ms(path: &std::path::Path) -> u64 {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::detect_sync_drive;
+    use std::path::Path;
+
+    #[test]
+    fn detects_common_sync_drives() {
+        assert_eq!(detect_sync_drive(Path::new("C:/Users/x/OneDrive/notes")), Some("OneDrive"));
+        assert_eq!(detect_sync_drive(Path::new("D:/坚果云/notes")), Some("坚果云"));
+        assert_eq!(detect_sync_drive(Path::new("D:/notes")), None);
+    }
 }

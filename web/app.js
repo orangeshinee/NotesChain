@@ -415,6 +415,12 @@ function buildSchedule(data) {
       box.append(el('div', 'muted empty-line', '无日程'));
     }
 
+    if (day.today && day.suspected && day.suspected.length) {
+      box.append(
+        el('div', 'unrec muted', `有 ${day.suspected.length} 行像日程但不在日程段内（第 ${day.suspected.join('、')} 行）`)
+      );
+    }
+
     if (day.unrecognized && day.unrecognized.length) {
       if (day.today) {
         const unrec = el('div', 'unrec');
@@ -802,9 +808,43 @@ async function showFile(path, line) {
   });
   currentEditor.focus();
   if (line) highlightLine(line);
-  if (state.links) mountBacklinks(wrap, path);
+  if (state.links) {
+    mountBacklinks(wrap, path);
+    mountOutgoing(wrap, path);
+  }
 }
 
+async function mountOutgoing(wrap, path) {
+  const panel = el('section', 'backlinks');
+  const head = el('div', 'section-head');
+  head.append(el('h2', '', '出链'));
+  panel.append(head);
+  const body = el('div', 'muted', '读取中…');
+  panel.append(body);
+  wrap.append(panel);
+  try {
+    const data = await api('/api/links?path=' + encodeURIComponent(path));
+    body.replaceChildren();
+    if (!data.total) {
+      body.textContent = '这篇没有指向别处的双链。';
+      return;
+    }
+    const list = el('ul', 'results');
+    for (const item of data.items) {
+      const li = el('li');
+      li.append(el('div', 'meta', `第 ${item.line} 行`));
+      const resolved = item.resolved ? item.resolved + '.md' : '未命中';
+      li.append(el('div', 'snippet', `[[${item.target}]] → ${resolved}`));
+      if (item.resolved) {
+        li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.resolved + '.md')));
+      }
+      list.append(li);
+    }
+    body.replaceChildren(list);
+  } catch (err) {
+    body.textContent = '读取失败：' + (err.message || err);
+  }
+}
 async function mountBacklinks(wrap, path) {
   const panel = el('section', 'backlinks');
   const head = el('div', 'section-head');
@@ -1710,6 +1750,10 @@ async function boot() {
       state.links = !!cfg.links;
       state.duplicateNames = cfg.duplicateNames || [];
       state.largeAssets = cfg.largeAssets || [];
+      if (cfg.syncDrive) {
+        const note = el('div', 'notice', `目录位于 ${cfg.syncDrive} 内，Git 自动提交可能与同步客户端冲突，建议移到普通目录`);
+        document.querySelector('.panels').prepend(note);
+      }
       if (state.largeAssets.length) {
         const names = state.largeAssets.map((f) => `${f.path} (${f.sizeMb}MB)`).join('、');
         const note = el('div', 'notice', `assets/ 里有大文件，会让 Git 仓库持续变大：${names}`);
