@@ -19,7 +19,7 @@ const state = {
   todoTag: '',
   searchScope: 'all',
   largeAssets: [],
-  collapsedTags: new Set(),
+  expandedTags: new Set(),
   leafEls: new Map(),
 };
 
@@ -440,7 +440,15 @@ function buildSchedule(data) {
         if (entry.status === 'live') li.append(el('span', 'live-pill', '进行中'));
         li.append(el('span', 'what', item.title));
         if (item.place) li.append(el('span', 'place', '@' + item.place));
-        for (const tag of item.tags) li.append(el('span', 'tag', '#' + tag));
+        for (const tag of item.tags) {
+          const chip = el('span', 'tag', '#' + tag);
+          chip.style.cursor = 'pointer';
+          chip.addEventListener('click', (event) => {
+            event.stopPropagation();
+            go('/tag/' + encodeURIComponent(tag));
+          });
+          li.append(chip);
+        }
         list.append(li);
       }
       box.append(list);
@@ -449,9 +457,19 @@ function buildSchedule(data) {
     }
 
     if (day.today && day.suspected && day.suspected.length) {
-      box.append(
-        el('div', 'unrec muted', `有 ${day.suspected.length} 行像日程但不在日程段内（第 ${day.suspected.join('、')} 行）`)
-      );
+      const hint = el('div', 'unrec muted');
+      hint.append(el('span', '', `有 ${day.suspected.length} 行像日程但不在日程段内：`));
+      for (const lineNo of day.suspected) {
+        const a = el('a', 'suspected-link', `第 ${lineNo} 行`);
+        a.href = '#';
+        a.addEventListener('click', (event) => {
+          event.preventDefault();
+          if (day.path) go('/file/' + encodeURIComponent(day.path) + '@' + lineNo);
+        });
+        hint.append(a);
+        hint.append(document.createTextNode(' '));
+      }
+      box.append(hint);
     }
 
     if (day.unrecognized && day.unrecognized.length) {
@@ -1322,20 +1340,13 @@ function renderFileTree(data) {
       monthSum.append(el('span', '', `${month.month} 月`));
       monthSum.append(el('span', 'n', String(month.entries.length)));
       monthBox.append(monthSum);
-      const now = new Date();
-      if (
-        year.year === String(now.getFullYear()) &&
-        month.month === String(now.getMonth() + 1).padStart(2, '0')
-      ) {
-        monthBox.open = true;
-      }
+
       for (const entry of month.entries) {
         monthBox.append(fileLeaf(entry.path, entry.path.split('/').pop().replace(/\.md$/, ''), entry.todos));
         total++;
       }
       yearBox.append(monthBox);
     }
-    if (year.year === new Date().getFullYear().toString()) yearBox.open = true;
     fileTree.append(yearBox);
   }
 
@@ -1400,15 +1411,15 @@ function renderTagTree(nodes) {
 
       const caret = el('span', 'caret', hasChildren ? '▸' : '');
       if (hasChildren) {
-        const collapsed = state.collapsedTags.has(node.path);
-        caret.classList.toggle('open', !collapsed);
+        const expanded = state.expandedTags.has(node.path);
+        caret.classList.toggle('open', expanded);
         caret.addEventListener('click', (event) => {
           event.stopPropagation();
           const sub = row.nextElementSibling;
           if (!sub) return;
-          if (state.collapsedTags.has(node.path)) state.collapsedTags.delete(node.path);
-          else state.collapsedTags.add(node.path);
-          sub.hidden = !sub.hidden;
+          if (state.expandedTags.has(node.path)) state.expandedTags.delete(node.path);
+          else state.expandedTags.add(node.path);
+          sub.hidden = !state.expandedTags.has(node.path);
           caret.classList.toggle('open', !sub.hidden);
         });
       }
@@ -1421,7 +1432,7 @@ function renderTagTree(nodes) {
 
       if (hasChildren) {
         const sub = el('div', 'tag-children');
-        sub.hidden = state.collapsedTags.has(node.path);
+        sub.hidden = !state.expandedTags.has(node.path);
         container.append(sub);
         walk(node.children, depth + 1, sub);
       }
@@ -1441,8 +1452,20 @@ function renderTagTree(nodes) {
   walk(sortNodes(nodes), 0, tagTree);
   document.getElementById('tag-count').textContent = String(nodes.length);
 }
+function expandToActive() {
+  const leaf = state.activePath ? state.leafEls.get(state.activePath) : null;
+  if (!leaf) return;
+  let node = leaf.parentElement;
+  while (node) {
+    if (node.tagName === 'DETAILS') node.open = true;
+    node = node.parentElement;
+  }
+  leaf.scrollIntoView({ block: 'nearest' });
+}
+
 function markActive() {
   for (const [path, leaf] of state.leafEls) leaf.classList.toggle('active', path === state.activePath);
+  expandToActive();
   for (const row of tagTree.querySelectorAll('.tag-node')) {
     row.classList.toggle('active', row.dataset.tag === state.activeTag);
   }

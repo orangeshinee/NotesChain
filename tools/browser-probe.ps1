@@ -66,7 +66,14 @@ function Reload-Page($ws, $url, [ref]$id) {
   Start-Sleep -Seconds 2
 }
 # 真·键盘输入：先用鼠标点进编辑器，再用 CDP Input.insertText
+function EnsureEdit($ws, [ref]$id) {
+  $id.Value++
+  $null = Eval-Js $ws "(() => { const b = Array.from(document.querySelectorAll('.doc-head .seg')).find((x) => x.textContent.trim() === '编辑'); if (b) b.click(); return 'ok'; })()" $id
+  Start-Sleep -Milliseconds 700
+}
+
 function Focus-And-Type($ws, $text, [ref]$id) {
+  EnsureEdit $ws $id
   $id.Value++
   $rect = Eval-Js $ws "(() => { const c = document.querySelector('.cm-content'); if (!c) return null; c.focus(); const r = c.getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + 120), y: Math.round(r.top + 40) }); })()" $id
   if (-not $rect) { return "no-editor" }
@@ -111,6 +118,7 @@ try {
 
   if (& $want "hover") {
     Reload-Page $ws ($Url + $Hash) ([ref]$id)
+    EnsureEdit $ws ([ref]$id)
     $id++
     $js = @'
 (async () => {
@@ -131,6 +139,7 @@ try {
 
   if (& $want "todo") {
     Reload-Page $ws ($Url + $Hash) ([ref]$id)
+    EnsureEdit $ws ([ref]$id)
     $id++
     $js = @'
 (async () => {
@@ -259,6 +268,7 @@ try {
 
   if (& $want "clicks") {
     Reload-Page $ws ($Url + $Hash) ([ref]$id)
+    EnsureEdit $ws ([ref]$id)
     $id++
     $js = @'
 (async () => {
