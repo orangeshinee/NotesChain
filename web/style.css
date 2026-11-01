@@ -772,3 +772,21 @@ table.todos th { position: relative; user-select: none; }
 .day.collapsed .unrec { display: none; }
 
 .cm-time { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* 日程状态：进行中 / 已结束 */
+.slots li.live {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-radius: 6px;
+  padding-left: 6px;
+  margin-left: -6px;
+}
+.slots li.live .what { font-weight: 600; }
+.slots li.past { opacity: .5; }
+.live-pill {
+  font-size: 10.5px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  flex: none;
+}

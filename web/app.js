@@ -7,6 +7,8 @@ const state = {
   activeTag: null,
   searchStatus: 'all',
   scheduleRange: 'week',
+  scheduleData: null,
+  scheduleTimer: null,
   links: false,
   todoLimit: 1000,
   todoStatus: 'open',
@@ -276,6 +278,23 @@ function errorState(err) {
   return wrap;
 }
 
+function startScheduleTicker() {
+  if (state.scheduleTimer) clearInterval(state.scheduleTimer);
+  state.scheduleTimer = setInterval(() => {
+    const onHome = !location.hash || location.hash === '#/' || location.hash === '#';
+    if (!onHome || !state.scheduleData) return;
+    const old = document.querySelector('.schedule');
+    if (!old) return;
+    old.replaceWith(buildSchedule(state.scheduleData));
+  }, 60000);
+}
+
+function stopScheduleTicker() {
+  if (state.scheduleTimer) {
+    clearInterval(state.scheduleTimer);
+    state.scheduleTimer = null;
+  }
+}
 async function showHome() {
   state.activePath = null;
   state.activeTag = null;
@@ -291,6 +310,8 @@ async function showHome() {
       api('/api/schedule?range=' + state.scheduleRange).catch(() => null),
     ]);
     setGit(git);
+    state.scheduleData = schedule;
+    startScheduleTicker();
     const parts = [];
     if (schedule) parts.push(buildSchedule(schedule));
     parts.push(buildTodoSection(todos, () => { state.todoLimit = 50000; showHome(); }));
@@ -305,6 +326,7 @@ function buildSchedule(data) {
   const section = el('section', 'schedule');
   const head = el('div', 'section-head');
   head.append(el('h2', '', '日程'));
+
   const toggle = el('span', 'segmented');
   for (const [value, label] of [['today', '本日'], ['week', '本周'], ['month', '本月']]) {
     const btn = el('button', state.scheduleRange === value ? 'seg active' : 'seg', label);
@@ -318,31 +340,62 @@ function buildSchedule(data) {
   head.append(toggle);
   section.append(head);
 
-  const days = data.days || [];
+  const days = (data && data.days) || [];
   if (!days.length) {
     section.append(el('div', 'empty-state', '这一段时间里没有日记文件。'));
     return section;
   }
 
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const toMin = (text) => {
+    const parts = String(text).split(':');
+    return Number(parts[0]) * 60 + Number(parts[1] || 0);
+  };
+
   for (const day of days) {
-    const box = el('div', day.today ? 'day today' : 'day');
+    const isPastDay = day.date < todayStr;
+    const box = el('div', day.today ? 'day today' : isPastDay ? 'day past' : 'day');
     const dh = el('div', 'day-head');
     dh.style.cursor = 'pointer';
     dh.title = '点击折叠/展开当天日程';
     dh.addEventListener('click', () => box.classList.toggle('collapsed'));
+
+    const caret = el('span', 'day-caret', '▾');
+    dh.append(caret);
     if (day.today) dh.append(el('span', 'pill', '今天'));
     dh.append(el('span', 'date', `${day.date.slice(5).replace('-', '/')} ${day.weekday}`));
     if (day.items.length) dh.append(el('span', 'muted', `${day.items.length} 项`));
     box.append(dh);
 
-    const caret = el('span', 'day-caret', '▾');
-    dh.append(caret);
     if (day.items.length) {
+      // 计算状态：进行中置顶，已结束置灰（PRD 3.3.1）
+      const decorated = day.items.map((item) => {
+        const startMin = toMin(item.start);
+        const endMin = item.end ? toMin(item.end) : startMin;
+        let status = 'future';
+        if (day.today) {
+          if (item.end && nowMin >= startMin && nowMin < endMin) status = 'live';
+          else if (nowMin >= endMin) status = 'past';
+        } else if (isPastDay) {
+          status = 'past';
+        }
+        return { item, status, order: item.end ? 0 : 1 };
+      });
+      decorated.sort((a, b) => {
+        if (a.status === 'live' && b.status !== 'live') return -1;
+        if (b.status === 'live' && a.status !== 'live') return 1;
+        return String(a.item.start).localeCompare(String(b.item.start)) || a.order - b.order;
+      });
+
       const list = el('ul', 'slots');
-      for (const item of day.items) {
-        const li = el('li');
+      for (const entry of decorated) {
+        const item = entry.item;
+        const li = el('li', entry.status);
         const time = item.end ? `${item.start}–${item.end}` : item.start;
         li.append(el('span', 'time', time));
+        if (entry.status === 'live') li.append(el('span', 'live-pill', '进行中'));
         li.append(el('span', 'what', item.title));
         if (item.place) li.append(el('span', 'place', '@' + item.place));
         for (const tag of item.tags) li.append(el('span', 'tag', '#' + tag));
@@ -369,7 +422,6 @@ function buildSchedule(data) {
 
   return section;
 }
-
 function buildTodoSection(todos, onShowAll) {
   const section = el('section', 'todos-section');
   const head = el('div', 'section-head');
@@ -1031,6 +1083,7 @@ function setGit(git) {
 // ---------------------------------------------------------------- 路由
 
 async function route() {
+  stopScheduleTicker();
   // 切换页面前先把未保存的改动落盘（PRD 5.3：保存先于跳转）
   if (activeDirty && activeDirty() && activeFlush) {
     const flush = activeFlush;
