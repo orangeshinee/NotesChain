@@ -1564,10 +1564,10 @@ async function openLink(target) {
   } catch (err) {
     if (!window.confirm(`「${path}」还不存在，要新建吗？`)) return;
     try {
-      await api('/api/files/' + encodeURI(path) + '?force=true', {
-        method: 'PUT',
+      await api('/api/notes/new', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: '', version: '' }),
+        body: JSON.stringify({ path }),
       });
       await loadSidebar();
       go('/file/' + encodeURIComponent(path));
@@ -1758,6 +1758,25 @@ if (rebuildBtn) {
       window.alert('重建失败：' + (err.message || err));
     } finally {
       rebuildBtn.disabled = false;
+    }
+  });
+}
+
+const newNoteBtn = document.getElementById('new-note');
+if (newNoteBtn) {
+  newNoteBtn.addEventListener('click', async () => {
+    const title = window.prompt('新建笔记标题（会建在 raw/ 下，自带 frontmatter）');
+    if (!title || !title.trim()) return;
+    try {
+      const res = await api('/api/notes/new', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title.trim() }),
+      });
+      await loadSidebar();
+      go('/file/' + encodeURIComponent(res.path));
+    } catch (err) {
+      window.alert('新建失败：' + (err.message || err));
     }
   });
 }

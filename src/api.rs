@@ -18,10 +18,35 @@ use crate::todo_write::{self, LocateError};
 
 /// 每日文件骨架的权威副本（PRD 3.1.4），编译期内嵌，不读运行时文件。
 const DAILY_TEMPLATE: &str = include_str!("../docs/templates/daily-note.md");
+const NOTE_TEMPLATE: &str = include_str!("../docs/templates/note.md");
 const INDEX_HTML: &str = include_str!("../web/index.html");
 const APP_JS: &str = include_str!("../web/app.js");
 const STYLE_CSS: &str = include_str!("../web/style.css");
 const EDITOR_JS: &str = include_str!("../web/dist/editor.js");
+
+/// 渲染模板占位符：{{TITLE}} / {{DATE}} / {{DATETIME}}
+fn render_template(tpl: &str, title: &str, date: &str, datetime: &str) -> String {
+    tpl.replace("{{TITLE}}", title)
+        .replace("{{DATE}}", date)
+        .replace("{{DATETIME}}", datetime)
+}
+
+/// 路径形如 `YYYY/MM/YYYY-MM-DD.md` 视为日记
+fn diary_date_from_path(rel: &str) -> Option<String> {
+    let parts: Vec<&str> = rel.trim_end_matches(".md").split('/').collect();
+    if parts.len() != 3 || parts[0].len() != 4 || parts[1].len() != 2 {
+        return None;
+    }
+    if !parts[0].chars().all(|c| c.is_ascii_digit()) || !parts[1].chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let date = parts[2];
+    if date.len() == 10 && date.starts_with(&format!("{}-{}-", parts[0], parts[1])) {
+        Some(date.to_string())
+    } else {
+        None
+    }
+}
 
 pub fn router(state: Arc<AppState>) -> Router {
     let protected = Router::new()
@@ -29,6 +54,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/files/*path", get(read_file).put(save_file))
         .route("/api/todos", get(list_todos).patch(patch_todo))
         .route("/api/todos/append", post(append_todo))
+        .route("/api/notes/new", post(create_note))
         .route("/api/schedule/append", post(append_schedule))
         .route("/api/tags", get(list_tags))
         .route("/api/search", get(search))
@@ -483,6 +509,106 @@ async fn patch_todo(
     })))
 }
 
+// ---------------------------------------------------------------- 新建笔记
+
+#[derive(Deserialize)]
+struct NewNoteRequest {
+    /// 不传 path 时用 title 拼 `raw/<title>.md`
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    /// note / diary；不传时按路径判断
+    #[serde(default)]
+    r#type: Option<String>,
+}
+
+fn sanitize_title(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => ' ',
+            c => c,
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.').trim();
+    if trimmed.is_empty() {
+        "未命名".to_string()
+    } else {
+        trimmed.chars().take(80).collect()
+    }
+}
+
+async fn create_note(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<NewNoteRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let now = chrono::Local::now();
+    let datetime = now.format("%Y-%m-%d %H:%M").to_string();
+    let today = now.format("%Y-%m-%d").to_string();
+
+    let title = body.title.as_deref().map(sanitize_title).unwrap_or_default();
+    let rel = match body.path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => p.to_string(),
+        None => {
+            if title.is_empty() {
+                return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "缺少标题"));
+            }
+            format!("raw/{title}.md")
+        }
+    };
+    if !rel.ends_with(".md") {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "只支持 .md"));
+    }
+
+    let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
+    if abs.exists() {
+        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "同名文件已存在"));
+    }
+
+    let is_diary = body.r#type.as_deref() == Some("diary") || diary_date_from_path(&rel).is_some();
+    let content = if is_diary {
+        let date = diary_date_from_path(&rel).unwrap_or_else(|| today.clone());
+        render_template(DAILY_TEMPLATE, &date, &date, &datetime)
+    } else {
+        let name = title_or_stem(&title, &rel);
+        render_template(NOTE_TEMPLATE, &name, &today, &datetime)
+    };
+
+    let lock_path = st.relative(&abs);
+    let lock = st.lock_for(&lock_path).await;
+    let _guard = lock.lock().await;
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
+    }
+    todo_write::atomic_write(&abs, &content).map_err(ApiError::internal)?;
+    st.index
+        .write()
+        .await
+        .upsert(&st.notes_root, &lock_path)
+        .map_err(ApiError::internal)?;
+    st.git.notify();
+    st.revision
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    Ok(Json(json!({
+        "path": lock_path,
+        "type": if is_diary { "diary" } else { "note" },
+        "content": content,
+        "version": crate::index::version_of(mtime_ms(&abs), &content),
+    })))
+}
+
+fn title_or_stem(title: &str, rel: &str) -> String {
+    if !title.is_empty() {
+        return title.to_string();
+    }
+    rel.rsplit('/')
+        .next()
+        .unwrap_or(rel)
+        .trim_end_matches(".md")
+        .to_string()
+}
 // ---------------------------------------------------------------- 快速添加待办
 
 #[derive(Deserialize)]
@@ -572,7 +698,7 @@ async fn append_todo(
     let content = if exists {
         std::fs::read_to_string(&abs).map_err(ApiError::internal)?
     } else {
-        DAILY_TEMPLATE.replace("YYYY-MM-DD", &today)
+        render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
     };
 
     let (updated, line_no) = insert_into_section(&content, "## 待办", &format!("- [ ] {text}"));
@@ -629,7 +755,7 @@ async fn append_schedule(
     let content = if exists {
         std::fs::read_to_string(&abs).map_err(ApiError::internal)?
     } else {
-        DAILY_TEMPLATE.replace("YYYY-MM-DD", &today)
+        render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
     };
 
     let (updated, line_no) = insert_into_section(&content, "## 今日日程", &line);
@@ -675,7 +801,7 @@ async fn ensure_daily(State(st): State<Arc<AppState>>) -> Result<Json<Value>, Ap
         })));
     }
 
-    let content = DAILY_TEMPLATE.replace("YYYY-MM-DD", &today);
+    let content = render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string());
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
     }

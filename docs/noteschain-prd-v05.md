@@ -22,7 +22,8 @@
 1. **目录模型**：项目根目录下分 `notes/`（Markdown）与 `assets/`（附件）两个同级目录，日记路径变为 `<root>/notes/YYYY/MM/YYYY-MM-DD.md`。兼容旧布局：若 `<root>/notes` 不存在，则把 `<root>` 当作笔记目录（v0.5 行为不变）。
 2. **待办优先级**：新增 `!p0`–`!p9` 语法（与 `#标签` 分开），用于排序与过滤；默认无优先级。
 3. **编辑器默认预览**：打开笔记先进入只读渲染视图，需要修改时点「编辑」切到 CodeMirror。
-4. 其余实测反馈与处理见 `docs/issues-v0.2.md`。
+4. **新建笔记带元数据**：模板增加 YAML frontmatter（`title` / `type` / `created` / `tags`）。日记模板 = frontmatter + 四个二级标题；普通笔记模板 = frontmatter + 标题行。**仅用于新建文件**，不改写已有文件。
+5. 其余实测反馈与处理见 `docs/issues-v0.2.md`。
 
 ---
 ## v0.5 相对 v0.4 的变化（本版修订）
