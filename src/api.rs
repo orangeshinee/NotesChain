@@ -180,7 +180,12 @@ struct RootQuery {
 }
 
 async fn root(State(st): State<Arc<AppState>>, Query(q): Query<RootQuery>, headers: HeaderMap) -> Response {
+    let has_valid_cookie = cookie_token(&headers).as_deref() == Some(st.token.as_str());
     if let Some(token) = q.token {
+        // 已带有效 Cookie 时，再来 ?token= 一律拒绝重复引导（PRD 9.1），直接回干净地址
+        if has_valid_cookie {
+            return Redirect::temporary("/").into_response();
+        }
         if token == st.token {
             let mut resp = Redirect::temporary("/").into_response();
             let value = format!("nc_token={}; Path=/; HttpOnly; SameSite=Strict", st.token);

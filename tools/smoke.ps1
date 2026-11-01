@@ -81,10 +81,12 @@ try {
   $page = Invoke-WebRequest -Uri "$base/?token=$token" -WebSession $session
   Check "带 token 引导返回页面" ($page.StatusCode -eq 200 -and $page.Content -match '<div class="app"')
   Check "Cookie 已种" ([bool]$session.Cookies.GetCookies($base)['nc_token'])
+  $againStatus = (& curl.exe -s -o NUL -w "%{http_code}" -H "Cookie: nc_token=$token" "$base/?token=$token").Trim()
+  Check "已有 Cookie 时 ?token 被拒绝（307 重定向）" ($againStatus -eq '307') "实际 $againStatus"
 
   "2. 扫描与解析"
   $todos = Invoke-RestMethod -Uri "$base/api/todos" -WebSession $session
-  Check "未完成待办 4 条" ($todos.total -eq 4 -or $todos.total -eq 5) "实际 $($todos.total)"
+  Check "未完成待办 4 条" ($todos.total -eq 4) "实际 $($todos.total)"
   Check "代码块里的待办未被收录" (-not ($todos.items | Where-Object { $_.text -match '代码块里' }))
 
   "3. 日程"
@@ -101,7 +103,7 @@ try {
   $sr = Invoke-RestMethod -Uri "$base/api/search?q=$([uri]::EscapeDataString('采购'))" -WebSession $session
   Check "搜索命中" ($sr.total -ge 1)
   $srDone = Invoke-RestMethod -Uri "$base/api/search?q=$([uri]::EscapeDataString('采购'))&status=open" -WebSession $session
-  Check "状态过滤排除已完成" ($srDone.total -le $sr.total)
+  Check "状态过滤排除已完成" (-not ($srDone.items | Where-Object { $_.done })) "命中 $($srDone.total) 条"
 
   "6. 待办回写（三级定位）"
   $file = Join-Path $notes "2026\11\2026-11-01.md"

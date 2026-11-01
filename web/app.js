@@ -7,6 +7,7 @@ const state = {
   activeTag: null,
   searchStatus: 'all',
   previewMode: true,
+  viewSeq: 0,
   scheduleRange: 'week',
   scheduleData: null,
   scheduleTimer: null,
@@ -372,6 +373,7 @@ async function refreshTodoSection() {
   }
 }
 async function showHome() {
+  const mySeq = ++state.viewSeq;
   const keepScroll = main.scrollTop;
   state.activePath = null;
   state.activeTag = null;
@@ -386,6 +388,7 @@ async function showHome() {
       api('/api/git/status').catch(() => null),
       api('/api/schedule?range=' + state.scheduleRange).catch(() => null),
     ]);
+    if (mySeq !== state.viewSeq) return; // 已有更新的视图请求，丢弃本次结果
     const todos = Object.assign({}, todosRaw);
     if (state.todoSort === 'priority') {
       const rank = (item) => (typeof item.priority === 'number' ? item.priority : 99);
@@ -871,6 +874,9 @@ async function toggleTodo(tr, box) {
 }
 
 async function showFile(path, line) {
+  const mySeq = ++state.viewSeq;
+  activeFlush = null;
+  activeDirty = null;
   state.activePath = path;
   state.activeTag = null;
   markActive();
@@ -880,6 +886,7 @@ async function showFile(path, line) {
   let data;
   try {
     data = await api('/api/files/' + encodeURI(path));
+    if (mySeq !== state.viewSeq) return; // 慢请求返回时已切到别的页面
   } catch (err) {
     main.replaceChildren(docHead(path.split('/').pop(), '', path), errorState(err));
     return;
@@ -1327,6 +1334,7 @@ function highlightLine(lineNumber) {
   view.focus();
 }
 async function showSearch(q) {
+  const mySeq = ++state.viewSeq;
   state.activePath = null;
   markActive();
   main.replaceChildren(docHead('搜索', ''));
@@ -1335,6 +1343,7 @@ async function showSearch(q) {
   main.append(wrap);
   try {
     const data = await api('/api/search?q=' + encodeURIComponent(q) + '&status=' + state.searchStatus + '&scope=' + state.searchScope);
+    if (mySeq !== state.viewSeq) return;
     const list = el('ul', 'results');
     for (const item of data.items) {
       const li = el('li');
@@ -2054,6 +2063,18 @@ async function openNewNoteDialog() {
   document.body.append(mask);
   syncRows();
   titleInput.focus();
+}
+
+// 自动化环境（webdriver）不注册，避免无人处理确认框阻塞导航
+if (!navigator.webdriver) {
+  window.addEventListener('beforeunload', (event) => {
+    if (typeof activeDirty === 'function' && activeDirty()) {
+      event.preventDefault();
+      event.returnValue = '还有未保存的修改，确定离开？';
+      return event.returnValue;
+    }
+    return undefined;
+  });
 }
 
 const newNoteBtn = document.getElementById('new-note');

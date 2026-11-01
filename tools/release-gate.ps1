@@ -86,9 +86,15 @@ if (-not $SkipBrowser) {
     }
     if (-not $token) { throw "服务未就绪" }
     $hash = "#/file/" + [uri]::EscapeDataString("2026/11/2026-11-01.md")
-    $probeOut = & pwsh -NoProfile -File (Join-Path $PSScriptRoot "browser-probe.ps1") -Url "http://127.0.0.1:$Port/?token=$token" -Hash $hash -NotesDir $gate -Scenario all 2>&1
-    $probeText = $probeOut -join "`n"
-    $probeCode = $LASTEXITCODE
+    # 逐个场景跑（而不是 all）：一次长会话里跑全部时 Edge 偶发崩溃，逐场景更稳也更易定位
+    $scenarios = @('hover','todo','autosave','conflict','search','tag','preview','virtual','clicks','quickadd','schedjump','export','schedadd','resize','tagtoggle','scrollkeep')
+    $probeText = ''
+    $probeCode = 0
+    foreach ($sc in $scenarios) {
+      $one = & pwsh -NoProfile -File (Join-Path $PSScriptRoot "browser-probe.ps1") -Url "http://127.0.0.1:$Port/?token=$token" -Hash $hash -NotesDir $gate -Scenario $sc 2>&1
+      if ($LASTEXITCODE -ne 0) { $probeCode = $LASTEXITCODE }
+      $probeText += (($one -join "`n") + "`n")
+    }
     $checks = [regex]::Matches($probeText, '(\w[\w-]*) => (.*)')
     if ($probeCode -ne 0) {
       Record "浏览器探针（非零退出）" $false "probe exit=$probeCode"
@@ -102,6 +108,12 @@ if (-not $SkipBrowser) {
       $ok = $value -ne '' -and $value -notmatch 'no-|JS-ERROR' -and $value -notmatch '"added":false' -and $value -notmatch '"printed":0'
       if ($name -eq 'preview') {
         $ok = $ok -and $value -match '"defaultPreview":true' -and $value -match '"editorVisible":true' -and $value -match '"previewAgain":true' -and $value -match '"headings":[1-9]'
+      }
+      if ($name -eq 'autosave') {
+        $ok = $ok -and $value -match '"marker":true'
+      }
+      if ($name -eq 'clicks') {
+        $ok = $ok -and $value -match '"wikiFound":true' -and $value -match '"afterWiki":"#/file/'
       }
       if ($name -eq 'export') {
         $ok = $ok -and $value -match '"printed":\s*1([^0-9]|$)' -and $value -match '"previewVisible":true'

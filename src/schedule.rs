@@ -94,6 +94,10 @@ fn parse_line(line: &str, line_no: usize) -> Option<Item> {
         .filter(|w| !w.starts_with('#'))
         .collect::<Vec<_>>()
         .join(" ");
+    // 去掉标签/地点后标题为空（如 `- 10:00 #工作`）→ 视为未识别，不产出空标题日程
+    if title.trim().is_empty() {
+        return None;
+    }
     // 结束时间早于开始时间 → 视为未识别，不猜
     if let Some(end) = &end {
         if end <= &start {

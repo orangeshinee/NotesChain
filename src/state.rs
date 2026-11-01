@@ -69,10 +69,19 @@ impl AppState {
 
     /// 重建内存索引，返回扫描告警（非 UTF-8 文件、遍历失败等）。
     pub async fn rebuild_index(&self) -> anyhow::Result<Vec<String>> {
-        let index = Index::scan(&self.notes_root)?;
-        let warnings = index.warnings.clone();
-        *self.index.write().await = index;
-        Ok(warnings)
+        // 与按文件写操作协调：扫描期间若有写入（revision 变化），重扫一次，
+        // 避免用过期快照覆盖掉刚写入的索引项。
+        for _ in 0..3 {
+            let epoch = self.revision.load(std::sync::atomic::Ordering::SeqCst);
+            let index = Index::scan(&self.notes_root)?;
+            if self.revision.load(std::sync::atomic::Ordering::SeqCst) == epoch {
+                let warnings = index.warnings.clone();
+                *self.index.write().await = index;
+                return Ok(warnings);
+            }
+        }
+        // 连续三次都撞上写入：保留现有索引，返回其告警，不做覆盖
+        Ok(self.index.read().await.warnings.clone())
     }
 
     pub async fn lock_for(&self, rel: &str) -> Arc<Mutex<()>> {

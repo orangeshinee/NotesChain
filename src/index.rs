@@ -40,6 +40,8 @@ impl Index {
     pub fn scan(root: &Path) -> anyhow::Result<Index> {
         let ignore = Ignored::load(root);
         let mut index = Index::default();
+        // .gitignore 里不支持的规则（! / **）要让用户看得见
+        index.warnings.extend(ignore.warnings.iter().cloned());
 
         let walker = WalkDir::new(root).follow_links(false).sort_by_file_name();
         for entry in walker.into_iter().filter_entry(|e| !ignore.skip_entry(e.path())) {
@@ -250,6 +252,12 @@ fn diary_from_path(rel: &str) -> Option<String> {
         return None;
     }
     if !date[8..].chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    // 校验是真实存在的日期（排除 2026-02-31 这类）
+    let parsed = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok()?;
+    use chrono::Datelike;
+    if parsed.year().to_string() != year || format!("{:02}", parsed.month()) != month {
         return None;
     }
     Some(date)
