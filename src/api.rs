@@ -1041,10 +1041,14 @@ async fn search(State(st): State<Arc<AppState>>, Query(p): Query<SearchParams>) 
             } else {
                 "text"
             };
+            let before = if idx > 0 { Some(snippet(lines[idx - 1])) } else { None };
+            let after = if idx + 1 < lines.len() { Some(snippet(lines[idx + 1])) } else { None };
             items.push(json!({
                 "path": file.path,
                 "line": idx + 1,
                 "snippet": snippet(&text),
+                "before": before,
+                "after": after,
                 "kind": kind,
                 "done": state,
             }));

@@ -146,16 +146,17 @@ function renderTableHtml(rows) {
 let openLinkHandler = null;
 
 class WikiLinkWidget extends WidgetType {
-  constructor(target) {
+  constructor(target, missing) {
     super();
     this.target = target;
+    this.missing = !!missing;
   }
   eq(other) {
-    return other.target === this.target;
+    return other.target === this.target && other.missing === this.missing;
   }
   toDOM() {
     const span = document.createElement('span');
-    span.className = 'cm-wikilink';
+    span.className = this.missing ? 'cm-wikilink missing' : 'cm-wikilink';
     span.textContent = this.target;
     span.title = '[[' + this.target + ']]';
     span.addEventListener('mousedown', (e) => e.preventDefault());
@@ -306,7 +307,7 @@ const tableField = StateField.define({
   update: (deco, tr) => (tr.docChanged || tr.selection ? buildTableDecorations(tr.state) : deco),
   provide: (field) => EditorView.decorations.from(field),
 });
-function buildDecorations(view, assetFor, linksEnabled) {
+function buildDecorations(view, assetFor, linksEnabled, linkExists) {
   const builder = new RangeSetBuilder();
   const activeLines = new Set();
   for (const range of view.state.selection.ranges) {
@@ -364,7 +365,9 @@ function buildDecorations(view, assetFor, linksEnabled) {
             ranges.push({
               from: startAt,
               to: startAt + m[0].length,
-              deco: Decoration.replace({ widget: new WikiLinkWidget(m[1].trim()) }),
+              deco: Decoration.replace({
+                widget: new WikiLinkWidget(m[1].trim(), linkExists ? !linkExists(m[1].trim()) : false),
+              }),
             });
           }
         }
@@ -400,16 +403,16 @@ function buildDecorations(view, assetFor, linksEnabled) {
   }
   return builder.finish();
 }
-function livePreviewExtension(assetFor, onToggleTodo, linksEnabled) {
+function livePreviewExtension(assetFor, onToggleTodo, linksEnabled, linkExists) {
   class LivePreviewPlugin {
     constructor(view) {
       this.view = view;
       view.__ncOnToggle = onToggleTodo || null;
-      this.decorations = buildDecorations(view, assetFor, linksEnabled);
+      this.decorations = buildDecorations(view, assetFor, linksEnabled, linkExists);
     }
     update(update) {
       if (update.docChanged || update.viewportChanged || update.selectionSet) {
-        this.decorations = buildDecorations(update.view, assetFor, linksEnabled);
+        this.decorations = buildDecorations(update.view, assetFor, linksEnabled, linkExists);
       }
     }
   }
@@ -434,7 +437,7 @@ export function create(opts) {
         EditorView.lineWrapping,
         markdown({ base: markdownLanguage, addKeymap: true }),
         syntaxHighlighting(highlight),
-        livePreviewExtension(assetFor || ((p) => p), onToggleTodo, !!links),
+        livePreviewExtension(assetFor || ((p) => p), onToggleTodo, !!links, opts.linkExists || null),
         tableField,
         theme,
         keymap.of([

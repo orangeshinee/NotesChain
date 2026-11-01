@@ -13,6 +13,7 @@ const state = {
   todoLimit: 1000,
   todoStatus: 'open',
   duplicateNames: [],
+  pathSet: new Set(),
   largeAssets: [],
   collapsedTags: new Set(),
   leafEls: new Map(),
@@ -496,6 +497,29 @@ function makeColResizer(index, colEls) {
   });
   return handle;
 }
+function buildPathSet(filesData) {
+  const set = new Set();
+  for (const group of filesData.groups || []) {
+    if (group.kind === 'diary') {
+      for (const year of group.years || []) {
+        for (const month of year.months || []) {
+          for (const entry of month.entries) set.add(entry.path);
+        }
+      }
+    } else if (group.kind === 'note') {
+      for (const entry of group.entries) set.add(entry.path);
+    }
+  }
+  state.pathSet = set;
+}
+
+function resolveLinkPath(target) {
+  const clean = String(target || '').trim();
+  if (!clean) return '';
+  return clean.includes('/')
+    ? (/\.md$/.test(clean) ? clean : clean + '.md')
+    : 'raw/' + clean + '.md';
+}
 function buildTodoTable(items) {
   const table = el('table', 'todos');
   const saved = loadColWidths();
@@ -697,6 +721,7 @@ async function showFile(path, line) {
     links: state.links,
     onOpenLink: openLink,
     onOpenHref: openHref,
+    linkExists: (target) => state.pathSet.has(resolveLinkPath(target)),
     onToggleTodo: async (info) => {
       // 编辑器里点待办复选框：直接按行回写，不走整文件保存
       const res = await api('/api/todos', {
@@ -886,9 +911,11 @@ async function showSearch(q) {
       const meta = el('div', 'meta', `${item.path}:${item.line}`);
       meta.append(el('span', 'kind', kindLabel(item.kind)));
       const isCode = item.kind === 'code';
+      if (item.before) li.append(el('div', 'ctx', item.before));
       const snippet = el('div', isCode ? 'snippet clamped' : 'snippet');
       snippet.innerHTML = highlight(item.snippet, q);
-      li.append(meta, snippet);
+      li.append(snippet);
+      if (item.after) li.append(el('div', 'ctx', item.after));
       if (isCode) {
         const toggle = el('button', 'seg tiny', '展开');
         toggle.type = 'button';
@@ -982,6 +1009,7 @@ function highlight(text, needle) {
 
 async function loadSidebar() {
   const [files, tags] = await Promise.all([api('/api/files'), api('/api/tags')]);
+  buildPathSet(files);
   state.files = files;
   state.tags = tags;
   renderFileTree(files);
@@ -1425,6 +1453,54 @@ if (refreshBtn) {
   });
 }
 
+const SHORTCUTS = [
+  ['Ctrl / Cmd + K', '聚焦搜索框'],
+  ['/', '聚焦搜索框（不在输入态时）'],
+  ['Ctrl / Cmd + S', '立即保存当前笔记'],
+  ['Esc', '关闭弹层 / 收起侧边栏'],
+  ['?', '打开这个快捷键面板'],
+];
+
+function toggleHelp(force) {
+  const existing = document.getElementById('help-modal');
+  if (existing && force !== true) {
+    existing.remove();
+    return;
+  }
+  if (existing) return;
+  const mask = el('div', 'modal-mask');
+  mask.id = 'help-modal';
+  const box = el('div', 'modal');
+  box.append(el('h2', '', '快捷键'));
+  const list = el('dl', 'shortcut-list');
+  for (const [key, desc] of SHORTCUTS) {
+    list.append(el('dt', '', key));
+    list.append(el('dd', '', desc));
+  }
+  box.append(list);
+  const close = el('button', 'seg', '关闭');
+  close.type = 'button';
+  close.addEventListener('click', () => mask.remove());
+  box.append(close);
+  mask.append(box);
+  mask.addEventListener('click', (event) => {
+    if (event.target === mask) mask.remove();
+  });
+  document.body.append(mask);
+}
+
+document.addEventListener('keydown', (event) => {
+  const tag = (event.target.tagName || '').toLowerCase();
+  const typing = tag === 'input' || tag === 'textarea' || event.target.isContentEditable;
+  if (event.key === '?' && !typing) {
+    event.preventDefault();
+    toggleHelp();
+  }
+  if (event.key === 'Escape') {
+    const modal = document.getElementById('help-modal');
+    if (modal) modal.remove();
+  }
+});
 // 窄屏侧边栏抽屉
 const sidebarToggle = document.getElementById('sidebar-toggle');
 const backdrop = document.getElementById('backdrop');

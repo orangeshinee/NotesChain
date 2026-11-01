@@ -836,3 +836,51 @@ table.todos th { position: relative; user-select: none; }
 
 /* 文件树叶子上的待办计数 */
 .tree .leaf .n { margin-left: auto; }
+
+/* 搜索结果上下文 */
+.results .ctx {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 双链未命中 */
+.cm-wikilink.missing {
+  color: var(--faint);
+  border-bottom: 1px dashed var(--faint);
+}
+
+/* 快捷键面板 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .38);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.modal {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px 24px;
+  min-width: 340px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .25);
+}
+.modal h2 { font-size: 14px; margin: 0 0 12px; }
+.shortcut-list { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 0 0 16px; }
+.shortcut-list dt {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  background: var(--code-bg);
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  padding: 2px 7px;
+  justify-self: start;
+  white-space: nowrap;
+}
+.shortcut-list dd { margin: 0; font-size: 13px; color: var(--muted); align-self: center; }
