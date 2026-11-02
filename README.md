@@ -19,6 +19,9 @@ cargo build --release
 | `--port` | 端口，默认 8090，只绑 `127.0.0.1` |
 | `--links` | 启用双链 `[[目标]]`（默认关闭） |
 | `--no-git` | 关闭 Git 自动提交，其余功能照常 |
+| `--no-token` | 禁用 token 鉴权（仅建议个人独占机器；默认仍校验） |
+| `--commit-debounce` | Git 自动提交防抖秒数，默认 **300**（停改 5 分钟合并提交） |
+| `--commit-force` | 连续编辑强制提交秒数，默认 **1800** |
 
 目录结构（`--dir` 指向项目根）：
 
@@ -34,12 +37,13 @@ MyNotes/
 
 ## 主要能力
 
-- 首页：日程（本日 / 本周 / 本月）+ 全部待办，支持快速添加待办与日程
-- 待办：勾选即按行回写原文件（抗外部插行）、`!p0`–`!p9` 优先级、排序与筛选
-- 编辑：CodeMirror Live Preview，默认预览、点「编辑」进入修改；自动保存与冲突处理
-- 搜索：子串匹配 + 标签/状态过滤 + 上下文；标签树多级折叠
-- Git：自动 init、30 秒防抖提交、历史/diff、按文件回滚
-- 安全：启动 token + Cookie、路径穿越防护
+- 首页：日程（本日 / 本周 / 本月）+ 全部待办，支持快速添加待办与日程（日程用时间选择器）
+- 待办：勾选即按行回写原文件（抗外部插行）、`!p0`–`!p9` 优先级、排序与筛选，控件靠右
+- 编辑：CodeMirror Live Preview，默认预览、点「编辑」进入修改；**编辑态正文向预览看齐、frontmatter 折叠成卡片（双击编辑）**；自动保存与冲突处理；标签 `#` 联想
+- 外观：设置里可配置字体 / 字号 / 主题
+- 搜索：子串匹配 + 标签/状态过滤 + 上下文；标签树多级折叠（含 frontmatter `tags`）
+- Git：自动 init、防抖提交（默认 5 分钟，可配）、历史/diff（按文件折叠着色）、按文件回滚
+- 安全：启动 token + Cookie、路径穿越防护；`--no-token` 可本地免鉴权
 
 ## 验证
 
@@ -67,6 +71,7 @@ git push origin v0.1.0
 | [AGENTS.md](AGENTS.md) | 开发/协作入口：必做三件事 + 按需阅读索引 |
 | [docs/agents/](docs/agents/) | 架构、数据约定、实现坑、测试、工作流 |
 | [docs/noteschain-prd-v05.md](docs/noteschain-prd-v05.md) | 产品规格（含 v0.6 修订段） |
+| [docs/api.md](docs/api.md) | HTTP 接口文档（鉴权、错误码、全部接口） |
 | [docs/handover.md](docs/handover.md) | 当前状态、未完成事项、性能数据 |
 | [docs/verify.md](docs/verify.md) | 人工验收清单（真实目录 / 云桌面） |
 | [docs/release.md](docs/release.md) | 发布说明与操作手册 |

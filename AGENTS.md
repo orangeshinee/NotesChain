@@ -19,4 +19,6 @@ NotesChain：单文件 Rust（Axum）+ 原生 JS 的本地 Markdown 笔记工具
 | [docs/agents/testing.md](docs/agents/testing.md) | 加/改测试、判断覆盖够不够 |
 | [docs/agents/workflow.md](docs/agents/workflow.md) | 启动参数、端口、提交习惯、代码风格 |
 | [docs/handover.md](docs/handover.md) | 做到哪了、还差什么、性能数据 |
+| [docs/api.md](docs/api.md) | HTTP 接口签名、请求/响应字段、错误码 |
+| [docs/plan-2026-11-02-feedback.md](docs/plan-2026-11-02-feedback.md) | 2026-11 用户反馈整改计划与进度 |
 | [docs/noteschain-prd-v05.md](docs/noteschain-prd-v05.md) | 产品行为以它为准（含 v0.6 修订段） |

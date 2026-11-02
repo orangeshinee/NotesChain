@@ -21,7 +21,7 @@
 | `web/index.html` | 布局骨架（侧边栏 + 主区） |
 | `web/app.js` | 路由（hash）、渲染器、各视图、编辑器接线、轮询 |
 | `web/style.css` | 样式（含暗色模式、打印样式） |
-| `web/src/editor.js` → `web/dist/editor.js` | CodeMirror 6 扩展，esbuild 打包后由 `include_str!` 内嵌 |
+| `web/src/editor.js` → `web/dist/editor.js` | CodeMirror 6 扩展：Live Preview（隐藏符号、复选框、表格、图片、双链、标签/时间着色）、**编辑态向预览看齐的行/块装饰、frontmatter 折叠卡片、`#` 标签联想**；esbuild 打包后由 `include_str!` 内嵌 |
 
 ## 目录模型
 
@@ -54,5 +54,7 @@ MyNotes/                ← --dir 指向这里（项目根，git 仓库一般也
 ## 前端状态
 
 `state`（`app.js` 顶部）：`activePath`、`activeTag`、`previewMode`（每个文件打开都复位为 true）、`scheduleRange`、`todoStatus`、`todoSort`、`todoTag`、`expandedTags`、`pathSet`、`duplicateNames`。
+
+外观设置（字体 / 字号 / 主题）存 `localStorage`（`nc.font` / `nc.fontSize` / `nc.theme`），启动时 `applyAppearance()` 应用；主题靠 `html[data-theme]` + `:root` 变量覆盖系统偏好。
 
 外部改动的发现靠轮询 `GET /api/revision`（5 秒）；修订号变化时刷新侧边栏，并且只有磁盘版本真的变了才重载当前文件。
