@@ -113,7 +113,7 @@ if (-not $SkipBrowser) {
       $name = $c.Groups[1].Value
       $ok = $value -ne '' -and $value -notmatch 'no-|JS-ERROR' -and $value -notmatch '"added":false' -and $value -notmatch '"printed":0'
       if ($name -eq 'preview') {
-        $ok = $ok -and $value -match '"defaultPreview":true' -and $value -match '"editorVisible":true' -and $value -match '"previewAgain":true' -and $value -match '"headings":[1-9]'
+        $ok = $ok -and $value -match '"defaultPreview":true' -and $value -match '"editorVisible":true' -and $value -match '"previewAgain":true' -and $value -match '"headings":[1-9]' -and $value -match '"todoBoxes":[1-9]' -and $value -match '"todoIsInput":true'
       }
       if ($name -eq 'autosave') {
         $ok = $ok -and $value -match '"marker":true'
@@ -122,7 +122,7 @@ if (-not $SkipBrowser) {
         $ok = $ok -and $value -match '"wikiFound":true' -and $value -match '"afterWiki":"#/file/'
       }
       if ($name -eq 'export') {
-        $ok = $ok -and $value -match '"printed":\s*1([^0-9]|$)' -and $value -match '"previewVisible":true'
+        $ok = $ok -and $value -match '"exportButtons":0'
       }
       Record "浏览器：$($c.Groups[1].Value)" $ok $value.Substring(0, [Math]::Min(70, $value.Length))
     }

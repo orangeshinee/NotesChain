@@ -1564,12 +1564,16 @@ async fn search(State(st): State<Arc<AppState>>, Query(p): Query<SearchParams>) 
             }
         }
 
-        // 只有标签没有关键词：按文件返回
+        // 只有标签没有关键词：按文件返回，摘要显示「标签所在那一行」
         if needle.is_empty() {
+            let (line_no, text) = match &tag_filter {
+                Some(tag) => tag_line_snippet(&file.content, tag),
+                None => (1, first_line(&file.content)),
+            };
             items.push(json!({
                 "path": file.path,
-                "line": 1,
-                "snippet": first_line(&file.content),
+                "line": line_no,
+                "snippet": text,
                 "kind": "file",
             }));
             if items.len() >= limit {
@@ -1630,11 +1634,57 @@ async fn search(State(st): State<Arc<AppState>>, Query(p): Query<SearchParams>) 
 }
 
 fn first_line(content: &str) -> String {
-    content
-        .lines()
-        .find(|l| !l.trim().is_empty())
+    let lines: Vec<&str> = content.lines().collect();
+    let body_start = frontmatter_close(&lines).map(|i| i + 1).unwrap_or(0);
+    lines[body_start..]
+        .iter()
+        .find(|l| {
+            let t = l.trim();
+            !t.is_empty() && t != "---"
+        })
         .map(|l| snippet(l.trim_start_matches('#').trim()))
         .unwrap_or_default()
+}
+
+/// frontmatter 结束行（第二个 `---`）的索引；不是 frontmatter 返回 None。
+fn frontmatter_close(lines: &[&str]) -> Option<usize> {
+    if lines.first().map(|l| l.trim()) != Some("---") {
+        return None;
+    }
+    lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, l)| l.trim() == "---")
+        .map(|(i, _)| i)
+}
+
+/// 标签搜索时定位「标签所在行」：先找正文里带 `#标签` 的行，再找 frontmatter 里含该标签的行，
+/// 都没有则退回正文第一行。返回 (行号从 1 开始, 摘要)。修复「摘要全是 frontmatter 的 ---」。
+fn tag_line_snippet(content: &str, tag: &str) -> (usize, String) {
+    let lines: Vec<&str> = content.lines().collect();
+    let fm = frontmatter_close(&lines);
+    let body_start = fm.map(|i| i + 1).unwrap_or(0);
+
+    for (idx, line) in lines.iter().enumerate().skip(body_start) {
+        let tags = crate::markdown::extract_tags(line);
+        if tags.iter().any(|t| t == tag || t.starts_with(&format!("{tag}/"))) {
+            return (idx + 1, snippet(line.trim()));
+        }
+    }
+    if let Some(end) = fm {
+        for (idx, line) in lines.iter().enumerate().take(end + 1) {
+            if line.contains(tag) {
+                return (idx + 1, snippet(line.trim()));
+            }
+        }
+    }
+    for (idx, line) in lines.iter().enumerate().skip(body_start) {
+        if !line.trim().is_empty() {
+            return (idx + 1, snippet(line.trim()));
+        }
+    }
+    (1, first_line(content))
 }
 
 fn snippet(line: &str) -> String {
@@ -1763,5 +1813,32 @@ mod sync_tests {
         assert_eq!(detect_sync_drive(Path::new("C:/Users/x/OneDrive/notes")), Some("OneDrive"));
         assert_eq!(detect_sync_drive(Path::new("D:/坚果云/notes")), Some("坚果云"));
         assert_eq!(detect_sync_drive(Path::new("D:/notes")), None);
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::{first_line, tag_line_snippet};
+
+    #[test]
+    fn first_line_skips_frontmatter() {
+        let doc = "---\ntitle: x\ntags: []\n---\n\n# 真正的第一行\n";
+        assert_eq!(first_line(doc), "真正的第一行");
+    }
+
+    #[test]
+    fn tag_line_finds_body_line() {
+        let doc = "---\ntags: [工作]\n---\n\n随便\n\n- [ ] 写周报 #工作\n";
+        let (line, text) = tag_line_snippet(doc, "工作");
+        assert_eq!(line, 7);
+        assert!(text.contains("#工作"));
+    }
+
+    #[test]
+    fn tag_line_falls_back_to_frontmatter() {
+        let doc = "---\ntags: [生活]\n---\n\n正文没有标签\n";
+        let (line, text) = tag_line_snippet(doc, "生活");
+        assert_eq!(line, 2);
+        assert!(text.contains("生活"));
     }
 }

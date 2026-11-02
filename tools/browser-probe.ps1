@@ -271,19 +271,24 @@ try {
   let btn = findBtn();
   if (!btn) return 'no-toggle-button';
   const article = document.querySelector('.doc.preview');
+  const firstBox = article ? article.querySelector('input.preview-todo') : null;
   const stats = {
     defaultPreview: !!(article && !article.hidden),
     headings: article ? article.querySelectorAll('h1,h2,h3').length : 0,
     tables: article ? article.querySelectorAll('table').length : 0,
     images: article ? article.querySelectorAll('img.preview-img').length : 0,
     links: article ? article.querySelectorAll('a').length : 0,
+    // 预览里的待办必须是真实、可勾选的复选框（#2）
+    todoBoxes: article ? article.querySelectorAll('input.preview-todo').length : 0,
+    todoIsInput: !!(firstBox && firstBox.tagName === 'INPUT' && firstBox.type === 'checkbox' && !firstBox.disabled),
   };
+  // 预览/编辑往返
   btn.click();
-  await new Promise((r) => setTimeout(r, 500));
+  await new Promise((r) => setTimeout(r, 600));
   stats.editorVisible = !!document.querySelector('.editor-host:not([hidden]) .cm-editor');
   const btn2 = findBtn();
   if (btn2) btn2.click();
-  await new Promise((r) => setTimeout(r, 500));
+  await new Promise((r) => setTimeout(r, 600));
   stats.previewAgain = !!document.querySelector('.doc.preview:not([hidden])');
   return JSON.stringify(stats);
 })()
@@ -373,18 +378,11 @@ try {
     Reload-Page $ws ($Url + $Hash) 
     $script:cdpSeq++
     $js = @'
-(async () => {
-  let printed = 0;
-  window.print = () => { printed += 1; };
-  const btn = Array.from(document.querySelectorAll('.doc-head .seg')).find((b) => b.textContent.trim() === '导出 PDF');
-  if (!btn) return 'no-export-button';
-  btn.click();
-  await new Promise((r) => setTimeout(r, 600));
-  return JSON.stringify({
-    printed,
-    previewVisible: !!document.querySelector('.doc.preview:not([hidden])'),
-    editorHidden: !!document.querySelector('.editor-host[hidden]'),
-  });
+(() => {
+  // PDF 导出已按用户反馈隐藏：这里断言头部不再出现「导出 PDF / 打印」按钮
+  const btns = Array.from(document.querySelectorAll('.doc-head button'))
+    .filter((b) => /导出\s*PDF|打印/.test(b.textContent));
+  return JSON.stringify({ exportButtons: btns.length });
 })()
 '@
     $results += "export => " + (Eval-Js $ws $js )

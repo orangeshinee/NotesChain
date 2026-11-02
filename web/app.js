@@ -88,6 +88,8 @@ function inline(raw) {
   s = s.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>');
   s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
   s = s.replace(/(^|[\s(（，。；：])#([\w\u3400-\u9fff/-]+)/g, (_, p, tag) => `${p}<span class="tag">#${tag}</span>`);
+  // 优先级 !pN：边界与后端 extract_priority 一致（前为行首/空白/括号，后为行尾/空白/标点）
+  s = s.replace(/(^|[\s(（，。；：])![pP]([0-9])(?=$|[\s)）\.,，。；：!])/g, (_, p, n) => `${p}<span class="prio p${n}">P${n}</span>`);
   s = s.replace(/\u0001(\d+)\u0001/g, (_, i) => `<code>${esc(codes[Number(i)])}</code>`);
   return s;
 }
@@ -128,6 +130,8 @@ function renderMetaCard(metaLines) {
 
 function renderMarkdown(text) {
   const fm = splitFrontmatter(text);
+  // body 相对原文件少掉了 frontmatter 的若干行；data-line 要用真实文件行号，便于待办回写
+  const fmOffset = fm.meta ? fm.meta.length + 2 : 0;
   text = fm.body;
   const metaHtml = fm.meta ? renderMetaCard(fm.meta) : '';
   const lines = text.split('\n');
@@ -137,18 +141,17 @@ function renderMarkdown(text) {
 
   while (i < n) {
     const line = lines[i];
-    const start = i + 1;
+    const start = i + 1 + fmOffset;
 
-    // 围栏代码块
-    const fence = /^\s{0,3}(`{3,}|~{3,})\s*([\w+#.-]*)\s*$/.exec(line);
+    // 围栏代码块（允许列表项前缀 `- ```sql` 与任意缩进，修复「代码块前面有杠」渲染不出）
+    const fence = /^(\s*)(?:[-*+]\s+)?(`{3,}|~{3,})\s*([\w+#.-]*)\s*$/.exec(line);
     if (fence) {
-      const marker = fence[1];
+      const marker = fence[2];
       const ch = marker[0] === '`' ? '`' : '~';
       const len = marker.length;
-      const lang = fence[2] || '';
       const buf = [];
       i++;
-      const closeRe = new RegExp('^\\s{0,3}' + ch + '{' + len + ',}\\s*$');
+      const closeRe = new RegExp('^\\s*' + ch + '{' + len + ',}\\s*$');
       while (i < n) {
         if (closeRe.test(lines[i])) {
           i++;
@@ -199,7 +202,7 @@ function renderMarkdown(text) {
     }
 
     if (/^\s{0,6}([-*+]|\d+\.)\s+/.test(line)) {
-      const list = parseList(lines, i);
+      const list = parseList(lines, i, fmOffset);
       out.push(list.html);
       i = list.next;
       continue;
@@ -242,7 +245,7 @@ function parseTable(lines, start) {
   return { html: html + '</tbody></table>', next: i };
 }
 
-function parseList(lines, start) {
+function parseList(lines, start, offset) {
   const items = [];
   let i = start;
   const n = lines.length;
@@ -253,7 +256,7 @@ function parseList(lines, start) {
       indent: m[1].replace(/\t/g, '  ').length,
       ordered: /^\d+\.$/.test(m[2]),
       text: m[3],
-      line: i + 1,
+      line: i + 1 + (offset || 0),
     });
     i++;
   }
@@ -288,7 +291,8 @@ function renderList(nodes) {
     if (task) {
       const done = task[1].toLowerCase() === 'x';
       cls = done ? ' class="task done"' : ' class="task"';
-      inner = `<span class="box">${done ? '☑' : '☐'}</span>${inline(task[2])}`;
+      // 真复选框：预览里可直接勾选（事件在 renderPreviewNodes 里绑定）
+      inner = `<input type="checkbox" class="preview-todo" data-line="${node.line}"${done ? ' checked' : ''}>${inline(task[2])}`;
     } else {
       inner = inline(node.text);
     }
@@ -372,9 +376,9 @@ async function refreshTodoSection() {
     /* 保持原样 */
   }
 }
-async function showHome() {
+async function showHome(preserveScroll) {
   const mySeq = ++state.viewSeq;
-  const keepScroll = main.scrollTop;
+  const keepScroll = preserveScroll ? main.scrollTop : 0;
   state.activePath = null;
   state.activeTag = null;
   markActive();
@@ -404,6 +408,14 @@ async function showHome() {
     parts.push(buildTodoSection(todos, () => { state.todoLimit = 50000; showHome(); }));
     wrap.replaceChildren(...parts);
     main.replaceChildren(docHead('首页', `未完成 ${todos.total} 条`), wrap);
+    if (preserveScroll) {
+      // 轮询刷新首页时保持滚动位置，避免勾选待办后跳回顶部（#8）
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      main.scrollTop = keepScroll;
+      requestAnimationFrame(() => {
+        main.scrollTop = keepScroll;
+      });
+    }
   } catch (err) {
     wrap.replaceChildren(errorState(err));
   }
@@ -730,20 +742,25 @@ function resolveLinkPath(target) {
     ? (/\.md$/.test(clean) ? clean : clean + '.md')
     : 'raw/' + clean + '.md';
 }
-/* 待办正文里的 #标签 单独成段：避免「#工作/供应」被折成两行，同时保留点击筛选 */
+/* 待办正文富文本：同时渲染 `行内代码` 与 #标签（标签可点击筛选，代码用等宽样式） */
 function appendTodoText(container, raw) {
-  const re = /#[\w\u3400-\u9fff/-]+/g;
+  const re = /`([^`]+)`|#[\w\u3400-\u9fff/-]+/g;
   let last = 0;
   let match;
   while ((match = re.exec(raw)) !== null) {
     if (match.index > last) container.append(document.createTextNode(raw.slice(last, match.index)));
-    const name = match[0].slice(1);
-    const chip = el('span', 'tag', match[0]);
-    chip.addEventListener('click', (event) => {
-      event.stopPropagation();
-      go('/tag/' + encodeURIComponent(name));
-    });
-    container.append(chip);
+    if (match[1] !== undefined) {
+      // 行内代码
+      container.append(el('code', '', match[1]));
+    } else {
+      const name = match[0].slice(1);
+      const chip = el('span', 'tag', match[0]);
+      chip.addEventListener('click', (event) => {
+        event.stopPropagation();
+        go('/tag/' + encodeURIComponent(name));
+      });
+      container.append(chip);
+    }
     last = match.index + match[0].length;
   }
   if (last < raw.length) container.append(document.createTextNode(raw.slice(last)));
@@ -903,7 +920,12 @@ async function showFile(path, line) {
 
   let version = data.version;
   let eol = data.eol || 'lf';
-  let dirty = false;
+  // 预览与编辑器解耦：liveContent 是「预览显示、也是磁盘最新」的内容；
+  // editorStale 表示预览里勾选过待办，隐藏的编辑器文档已过期，切回编辑时需要重建。
+  let liveContent = data.content;
+  let editorStale = false;
+  let autoPreviewOnSave = false;
+  let lastSaved = data.content;
 
   const name = path.split('/').pop();
   const head = docHead(name, '', path);
@@ -920,16 +942,32 @@ async function showFile(path, line) {
   article.hidden = true;
   wrap.append(article);
 
-  // 注意：预览保持只读。曾尝试在预览里勾选待办，成功后会顺手把隐藏中的编辑器 setValue，
-  // 实测 CodeMirror 在 display:none 容器里会陷入测量死循环、整页卡死 —— 已回退。
+  // 预览里勾选待办：直接走后端 PATCH 回写，再把最新内容重新渲染到预览。
+  // 关键：绝不对 display:none 的 CodeMirror setValue（会触发测量死循环、整页卡死）。
+  const previewToggle = async ({ line, rawLine, done }) => {
+    const res = await api('/api/todos', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, line, raw_line: rawLine, version, done }),
+    });
+    const fresh = await api('/api/files/' + encodeURI(path));
+    version = fresh.version;
+    liveContent = fresh.content;
+    lastSaved = fresh.content;
+    editorStale = true; // 隐藏编辑器内容已过期；切到编辑时再重建
+    setPreview(true);
+  };
+
   const previewBtn = el('button', 'seg', '预览');
   previewBtn.type = 'button';
-  previewBtn.title = '在渲染视图与编辑视图之间切换';
+  previewBtn.title = '在渲染视图与编辑视图之间切换（预览里可直接勾选待办；双击正文也可进入编辑）';
   const setPreview = (on) => {
     state.previewMode = on;
     if (on) {
-      article.replaceChildren(...renderPreviewNodes(currentEditor ? currentEditor.getValue() : data.content, path));
-      if (currentEditor) renderOutline(outline, currentEditor.getValue());
+      const content = !editorStale && currentEditor ? currentEditor.getValue() : liveContent;
+      liveContent = content;
+      article.replaceChildren(...renderPreviewNodes(content, path, { onToggleTodo: previewToggle }));
+      renderOutline(outline, content);
       article.hidden = false;
       host.hidden = true;
       previewBtn.textContent = '编辑';
@@ -937,25 +975,25 @@ async function showFile(path, line) {
       article.hidden = true;
       host.hidden = false;
       previewBtn.textContent = '预览';
+      if (currentEditor && editorStale) {
+        // 容器已可见后再同步内容，避免隐藏态 setValue 的测量死循环
+        currentEditor.setValue(liveContent);
+        lastSaved = liveContent;
+        editorStale = false;
+      }
       if (currentEditor) currentEditor.focus();
     }
   };
   previewBtn.addEventListener('click', () => setPreview(!state.previewMode));
   head.append(previewBtn);
 
-  const exportBtn = el('button', 'seg', '导出 PDF');
-  exportBtn.type = 'button';
-  exportBtn.title = '切到渲染视图并调用浏览器打印（可选「另存为 PDF」）';
-  exportBtn.addEventListener('click', async () => {
-    try {
-      await flush(false);
-    } catch (err) {
-      /* 保存失败也让用户能打印当前视图 */
+  // 双击预览正文进入编辑（表格内的双击由表格 widget 自己处理）
+  article.addEventListener('dblclick', () => {
+    if (state.previewMode) {
+      autoPreviewOnSave = true; // 双击进入编辑：显式保存后自动回到预览
+      setPreview(false);
     }
-    setPreview(true);
-    setTimeout(() => window.print(), 300);
   });
-  head.append(exportBtn);
 
   const deleteBtn = el('button', 'seg danger', '删除');
   deleteBtn.type = 'button';
@@ -978,21 +1016,22 @@ async function showFile(path, line) {
   renderOutline(outline, data.content);
 
   // 以「磁盘上的内容」为基准判断脏：只有编辑器和 lastSaved 不同才需要保存
-  let lastSaved = data.content;
   let saveChain = Promise.resolve();
   let suppressChange = false;
 
   const currentText = () => (currentEditor ? currentEditor.getValue() : lastSaved);
-  const isDirty = () => currentText() !== lastSaved;
+  // 预览里勾选过待办（editorStale）时磁盘已是最新、编辑器文档过期，不应判定为脏
+  const isDirty = () => !editorStale && currentText() !== lastSaved;
 
   const setSaved = (content) => {
     lastSaved = content;
+    liveContent = content;
     setStatus(status, 'saved', '已保存 ' + timeNow());
     hideConflict(wrap);
   };
 
   const doSave = async (force = false) => {
-    if (!currentEditor) return true;
+    if (!currentEditor || (editorStale && !force)) return true;
     // 用循环而不是「回调 flush」：回调会把新的 then 追加到当前所在的同一条链上，
     // 形成自引用，Promise 永不结算（保存死锁）。
     for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -1071,7 +1110,13 @@ async function showFile(path, line) {
     onChange: scheduleSave,
     onSave: () => {
       clearTimeout(saveTimer);
-      flush(false);
+      const wasAuto = autoPreviewOnSave;
+      flush(false).then((ok) => {
+        if (wasAuto && ok !== false) {
+          autoPreviewOnSave = false;
+          setPreview(true);
+        }
+      });
     },
     assetFor,
     links: state.links,
@@ -1183,7 +1228,7 @@ function stripDoneMarker(line) {
   return at >= 0 ? text.slice(0, at).trimEnd() : text;
 }
 
-function renderPreviewNodes(content, filePath) {
+function renderPreviewNodes(content, filePath, opts) {
   const article = document.createElement('div');
   article.innerHTML = renderMarkdown(content);
   const lines = content.split('\n');
@@ -1219,6 +1264,24 @@ function renderPreviewNodes(content, filePath) {
     span.style.cursor = 'pointer';
     span.addEventListener('click', () => openLink(target));
   });
+
+  // 预览里的待办复选框：点击 → 回调里走 PATCH 回写（避免对隐藏编辑器 setValue）
+  if (opts && typeof opts.onToggleTodo === 'function') {
+    article.querySelectorAll('.preview-todo').forEach((box) => {
+      const lineNo = Number(box.getAttribute('data-line'));
+      if (!lineNo) return;
+      box.addEventListener('change', async () => {
+        const rawLine = stripDoneMarker(lines[lineNo - 1] || '');
+        box.disabled = true;
+        try {
+          await opts.onToggleTodo({ line: lineNo, rawLine, done: box.checked });
+        } catch (err) {
+          box.checked = !box.checked;
+          box.disabled = false;
+        }
+      });
+    });
+  }
 
   return Array.from(article.childNodes);
 }
@@ -1433,9 +1496,12 @@ async function showTag(path) {
     const list = el('ul', 'results');
     for (const item of files.items) {
       const li = el('li');
-      li.append(el('div', 'meta', item.path.replace(/\\.md$/i, '')));
+      // 显示标签所在行（后端已改为返回命中标签的那一行，而不是首行/`---`）
+      const where = item.line && item.line > 0 ? ':' + item.line : '';
+      li.append(el('div', 'meta', item.path.replace(/\.md$/i, '') + where));
       li.append(el('div', 'snippet', item.snippet));
-      li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.path)));
+      const jump = item.line && item.line > 1 ? '@' + item.line : '';
+      li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.path) + jump));
       list.append(li);
     }
     if (!files.items.length) parts.push(el('div', 'empty-state', '这个标签下还没有笔记。'));
@@ -1905,7 +1971,7 @@ async function refreshFromDisk() {
     /* 侧边栏刷新失败不影响主区域 */
   }
   if (!state.activePath) {
-    await showHome();
+    await showHome(true); // 轮询触发的首页刷新：保持滚动位置
     return;
   }
   // 编辑中不覆盖用户内容；未编辑则只在磁盘版本真的变了时重载

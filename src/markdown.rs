@@ -59,26 +59,25 @@ pub fn code_block_flags(lines: &[&str]) -> Vec<bool> {
 
     for line in lines {
         let trimmed = line.trim_start();
-        let indent = line.len() - trimmed.len();
         let mut marked = false;
 
-        if indent <= 3 {
-            match fence {
-                Some((ch, len)) => {
-                    let run = leading_run(trimmed, ch);
-                    if run >= len && trimmed[run..].trim().is_empty() {
-                        fence = None;
-                        marked = true; // 收尾围栏行本身也算代码块
-                    }
+        match fence {
+            Some((ch, len)) => {
+                let run = leading_run(trimmed, ch);
+                if run >= len && trimmed[run..].trim().is_empty() {
+                    fence = None;
+                    marked = true; // 收尾围栏行本身也算代码块
                 }
-                None => {
-                    for ch in ['`', '~'] {
-                        let run = leading_run(trimmed, ch);
-                        if run >= 3 {
-                            fence = Some((ch, run));
-                            marked = true;
-                            break;
-                        }
+            }
+            None => {
+                // 允许列表项前缀的围栏：`- ```sql` / `* ~~~`（修复「代码块前面有杠」）
+                let probe = strip_list_bullet(trimmed);
+                for ch in ['`', '~'] {
+                    let run = leading_run(probe, ch);
+                    if run >= 3 {
+                        fence = Some((ch, run));
+                        marked = true;
+                        break;
                     }
                 }
             }
@@ -88,6 +87,16 @@ pub fn code_block_flags(lines: &[&str]) -> Vec<bool> {
     }
 
     flags
+}
+
+/// 去掉行首的列表项符号（`- ` / `* ` / `+ `），用于围栏识别。
+fn strip_list_bullet(s: &str) -> &str {
+    for b in ["- ", "* ", "+ "] {
+        if let Some(rest) = s.strip_prefix(b) {
+            return rest.trim_start();
+        }
+    }
+    s
 }
 
 fn leading_run(s: &str, ch: char) -> usize {
@@ -283,11 +292,83 @@ pub fn todo_text(line: &str) -> String {
     }
 }
 
-/// 收集文件里出现的全部标签（去重）。代码块与标题行里的 `#` 不算。
+/// 解析 frontmatter 里的 tags（元数据标签也要进标签树，PRD 3.4 统一索引）。
+/// 支持 `tags: [a, b]`、`tags: []`、`tags: a`，以及块列表：
+/// ```text
+/// tags:
+///   - a
+///   - b
+/// ```
+/// 只认开头 `---` 与结束 `---` 之间的内容；非 frontmatter 返回空。
+pub fn frontmatter_tags(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut lines = content.lines();
+    if lines.next().map(|l| l.trim()) != Some("---") {
+        return out;
+    }
+    let rest: Vec<&str> = lines.collect();
+    let Some(end) = rest.iter().position(|l| l.trim() == "---") else {
+        return out;
+    };
+    let fm = &rest[..end];
+    let mut i = 0;
+    while i < fm.len() {
+        let trimmed = fm[i].trim_start();
+        if let Some(val) = trimmed.strip_prefix("tags:") {
+            let val = val.trim();
+            if val.starts_with('[') {
+                // flow 列表：tags: [a, b]
+                let inner = val.trim_start_matches('[').trim_end_matches(']');
+                for part in inner.split(',') {
+                    push_tag(&mut out, part);
+                }
+            } else if !val.is_empty() {
+                // 单值：tags: a
+                push_tag(&mut out, val);
+            } else {
+                // 块列表：后续顶格 `- x` 行
+                let mut j = i + 1;
+                while j < fm.len() {
+                    let nt = fm[j].trim_start();
+                    if nt.is_empty() {
+                        j += 1;
+                        continue;
+                    }
+                    if let Some(item) = nt.strip_prefix("- ") {
+                        push_tag(&mut out, item);
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn push_tag(out: &mut Vec<String>, raw: &str) {
+    let cleaned = raw
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .trim_start_matches('#')
+        .trim();
+    if !cleaned.is_empty() && !out.iter().any(|t| t == cleaned) {
+        out.push(cleaned.to_string());
+    }
+}
+
+/// 收集文件里出现的全部标签（去重，含 frontmatter 元数据标签）。
+/// 代码块与标题行里的 `#` 不算。
 pub fn collect_tags(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = frontmatter_tags(content);
     let lines: Vec<&str> = content.lines().collect();
     let flags = code_block_flags(&lines);
-    let mut out: Vec<String> = Vec::new();
     for (idx, line) in lines.iter().enumerate() {
         if flags[idx] {
             continue;
@@ -373,6 +454,18 @@ todo: 代码块里的不算
     }
 
     #[test]
+    fn fence_with_list_bullet() {
+        // `- ```sql` 这种列表项前缀的围栏也要识别，里面的 - [ ] 不算待办
+        let content = "- ```sql\n- [ ] 这不是待办\n```\n- [ ] 真待办\n";
+        let lines: Vec<&str> = content.lines().collect();
+        let flags = code_block_flags(&lines);
+        assert_eq!(flags, vec![true, true, true, false]);
+        let todos = parse_todos(content);
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].text, "真待办");
+    }
+
+    #[test]
     fn todo_parse_and_done_marker() {
         let content = "\
 # 2026-11-01
@@ -415,5 +508,34 @@ todo: 代码块里的不算
         // 首尾斜杠不合法
         assert!(extract_tags("#/abc").is_empty());
         assert!(extract_tags("#abc/").is_empty());
+    }
+
+    #[test]
+    fn frontmatter_tags_parsed() {
+        let flow = "---\ntitle: x\ntags: [工作, 生活/家务]\n---\n\n# 标题\n";
+        assert_eq!(
+            frontmatter_tags(flow),
+            vec!["工作".to_string(), "生活/家务".to_string()]
+        );
+        assert!(frontmatter_tags("---\ntags: []\n---\n").is_empty());
+        assert_eq!(
+            frontmatter_tags("---\ntags: 工作\n---\n"),
+            vec!["工作".to_string()]
+        );
+        let block = "---\ntags:\n  - 工作\n  - 生活\n---\n";
+        assert_eq!(
+            frontmatter_tags(block),
+            vec!["工作".to_string(), "生活".to_string()]
+        );
+        // 非 frontmatter 不解析
+        assert!(frontmatter_tags("# 普通标题\n#标签\n").is_empty());
+    }
+
+    #[test]
+    fn collect_tags_merges_frontmatter_and_body() {
+        let doc = "---\ntags: [工作]\n---\n\n写点 #生活 的东西\n";
+        let tags = collect_tags(doc);
+        assert!(tags.contains(&"工作".to_string()));
+        assert!(tags.contains(&"生活".to_string()));
     }
 }
