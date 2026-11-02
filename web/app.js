@@ -83,7 +83,10 @@ function inline(raw) {
       ? `<a href="${href}" target="_blank" rel="noreferrer">${text}</a>`
       : `<span class="link-ph" title="${href}">${text}</span>`
   );
-  s = s.replace(/\[\[([^\]]+)\]\]/g, (_, t) => `<span class="wikilink">${t}</span>`);
+  // 双链仅在开启时渲染成链接；关闭时按普通文本显示（与编辑器一致，PRD 3.5）
+  if (state.links) {
+    s = s.replace(/\[\[([^\]]+)\]\]/g, (_, t) => `<span class="wikilink">${t}</span>`);
+  }
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>');
   s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
@@ -291,8 +294,14 @@ function renderList(nodes) {
     if (task) {
       const done = task[1].toLowerCase() === 'x';
       cls = done ? ' class="task done"' : ' class="task"';
+      // 完成项剥离行尾的「✅ 时间」标记（与编辑器一致，不再当正文显示）
+      let taskText = task[2];
+      if (done) {
+        const at = taskText.indexOf('✅');
+        if (at >= 0) taskText = taskText.slice(0, at).trimEnd();
+      }
       // 真复选框：预览里可直接勾选（事件在 renderPreviewNodes 里绑定）
-      inner = `<input type="checkbox" class="preview-todo" data-line="${node.line}"${done ? ' checked' : ''}>${inline(task[2])}`;
+      inner = `<input type="checkbox" class="preview-todo" data-line="${node.line}"${done ? ' checked' : ''}>${inline(taskText)}`;
     } else {
       inner = inline(node.text);
     }
@@ -1016,7 +1025,28 @@ async function showFile(path, line) {
         lastSaved = liveContent;
         editorStale = false;
       }
-      if (currentEditor) currentEditor.focus();
+      if (currentEditor && currentEditor.view) {
+        currentEditor.focus();
+        // 进入编辑时若光标落在 frontmatter 内，移到正文首行，让元数据默认折叠成卡片（#15.4）
+        try {
+          const doc = currentEditor.view.state.doc;
+          if (doc.line(1).text.trim() === '---') {
+            let end = -1;
+            for (let n = 2; n <= doc.lines; n += 1) {
+              if (doc.line(n).text.trim() === '---') { end = n; break; }
+            }
+            if (end > 0) {
+              const head = currentEditor.view.state.selection.main.head;
+              if (head <= doc.line(end).to) {
+                const bodyFrom = end < doc.lines ? doc.line(end + 1).from : doc.line(end).to;
+                currentEditor.view.dispatch({ selection: { anchor: bodyFrom } });
+              }
+            }
+          }
+        } catch (err) {
+          /* ignore */
+        }
+      }
     }
   };
   previewBtn.addEventListener('click', () => setPreview(!state.previewMode));

@@ -54,6 +54,7 @@ const theme = EditorView.theme({
 const markHide = Decoration.mark({ class: 'cm-syntax-mark' });
 const tagMark = Decoration.mark({ class: 'cm-tag' });
 const timeMark = Decoration.mark({ class: 'cm-time' });
+const inlineCodeMark = Decoration.mark({ class: 'cm-inline-code' });
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -159,6 +160,186 @@ function renderTableHtml(rows) {
   }
   return html + '</tbody></table>';
 }
+
+// ---------------- 编辑态向预览看齐（#15.4） ----------------
+
+/** frontmatter 元数据卡片：编辑态默认折叠成卡片，双击露出源码 */
+function renderMetaHtml(metaLines) {
+  const rows = [];
+  for (const line of metaLines) {
+    const at = line.indexOf(':');
+    if (at < 0) continue;
+    const key = line.slice(0, at).trim();
+    const value = line.slice(at + 1).trim();
+    if (!key) continue;
+    rows.push({ key, value });
+  }
+  if (!rows.length) return '<div class="meta-card"><span class="muted">（空元数据）</span></div>';
+  let html = '<div class="meta-card"><table>';
+  for (const row of rows) {
+    let value = escapeHtml(row.value);
+    if (row.key === 'tags') {
+      const inner = row.value.replace(/^\[|\]$/g, '').trim();
+      value = inner
+        ? inner
+            .split(',')
+            .map((t) => `<span class="tag">#${escapeHtml(t.trim())}</span>`)
+            .join(' ')
+        : '<span class="muted">—</span>';
+    }
+    html += `<tr><th>${escapeHtml(row.key)}</th><td>${value}</td></tr>`;
+  }
+  return html + '</table></div>';
+}
+
+/** 返回 frontmatter 范围（首行 `---` 到结束 `---`），无则 null */
+function frontmatterRange(state) {
+  const doc = state.doc;
+  if (doc.lines < 2 || doc.line(1).text.trim() !== '---') return null;
+  for (let n = 2; n <= doc.lines; n += 1) {
+    if (doc.line(n).text.trim() === '---') {
+      return { from: doc.line(1).from, to: doc.line(n).to, endLine: n };
+    }
+  }
+  return null;
+}
+
+class FrontmatterWidget extends WidgetType {
+  constructor(metaLines, pos) {
+    super();
+    this.metaLines = metaLines;
+    this.pos = pos;
+  }
+  eq(other) {
+    return (
+      other.pos === this.pos &&
+      Array.isArray(other.metaLines) &&
+      other.metaLines.join('\n') === this.metaLines.join('\n')
+    );
+  }
+  toDOM(view) {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-meta-card';
+    wrap.title = '双击编辑元数据';
+    wrap.innerHTML = renderMetaHtml(this.metaLines);
+    wrap.addEventListener('dblclick', () => {
+      try {
+        view.dispatch({ selection: { anchor: this.pos }, scrollIntoView: true });
+        view.focus();
+      } catch (err) {
+        /* ignore */
+      }
+    });
+    return wrap;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+function buildFrontmatterDecoration(state) {
+  const r = frontmatterRange(state);
+  if (!r) return Decoration.none;
+  const active = new Set();
+  for (const range of state.selection.ranges) {
+    const first = state.doc.lineAt(range.from).number;
+    const last = state.doc.lineAt(range.to).number;
+    for (let n = first; n <= last; n += 1) active.add(n);
+  }
+  for (let n = 1; n <= r.endLine; n += 1) if (active.has(n)) return Decoration.none;
+  const metaLines = [];
+  for (let n = 2; n <= r.endLine - 1; n += 1) metaLines.push(state.doc.line(n).text);
+  return Decoration.set([
+    Decoration.replace({ widget: new FrontmatterWidget(metaLines, r.from), block: true }).range(r.from, r.to),
+  ]);
+}
+const frontmatterField = StateField.define({
+  create: (state) => buildFrontmatterDecoration(state),
+  update: (deco, tr) => (tr.docChanged || tr.selection ? buildFrontmatterDecoration(tr.state) : deco),
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+/** 代码块（围栏）覆盖的行号集合（含围栏行本身） */
+function fencedLines(doc) {
+  const set = new Set();
+  let open = false;
+  let fenceChar = '';
+  for (let n = 1; n <= doc.lines; n += 1) {
+    const t = doc.line(n).text.trimStart();
+    const m = /^(`{3,}|~{3,})/.exec(t);
+    if (m) {
+      if (!open) {
+        open = true;
+        fenceChar = m[1][0];
+      } else if (m[1][0] === fenceChar) {
+        open = false;
+      }
+      set.add(n);
+      continue;
+    }
+    if (open) set.add(n);
+  }
+  return set;
+}
+
+/** 优先级 !pN 徽标 */
+class PriorityWidget extends WidgetType {
+  constructor(n) {
+    super();
+    this.n = n;
+  }
+  eq(other) {
+    return other.n === this.n;
+  }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'prio p' + this.n;
+    span.textContent = 'P' + this.n;
+    return span;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+/** 行级排版：标题 h1-h6、已完成待办删除线、代码块底色 */
+function buildLineDecorations(state) {
+  const doc = state.doc;
+  const fm = frontmatterRange(state);
+  const startLine = fm ? fm.endLine + 1 : 1;
+  const decos = [];
+  let open = false;
+  let fenceChar = '';
+  for (let n = startLine; n <= doc.lines; n += 1) {
+    const text = doc.line(n).text;
+    const trimmed = text.trimStart();
+    const fenceM = /^(`{3,}|~{3,})/.exec(trimmed);
+    if (fenceM) {
+      if (!open) {
+        open = true;
+        fenceChar = fenceM[1][0];
+      } else if (fenceM[1][0] === fenceChar) {
+        open = false;
+      }
+      decos.push(Decoration.line({ class: 'cm-code-fence' }).range(doc.line(n).from));
+      continue;
+    }
+    if (open) {
+      decos.push(Decoration.line({ class: 'cm-codeblock' }).range(doc.line(n).from));
+      continue;
+    }
+    const h = /^(#{1,6})\s+/.exec(text);
+    if (h) decos.push(Decoration.line({ class: 'cm-h' + h[1].length }).range(doc.line(n).from));
+    else if (/^\s*- \[[xX]\]/.test(text)) decos.push(Decoration.line({ class: 'cm-task-done' }).range(doc.line(n).from));
+  }
+  return Decoration.set(decos, true);
+}
+const lineField = StateField.define({
+  create: (state) => buildLineDecorations(state),
+  update: (deco, tr) => (tr.docChanged ? buildLineDecorations(tr.state) : deco),
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 /** 双链 [[目标]]（PRD 3.5，默认关闭） */
 let openLinkHandler = null;
 
@@ -387,12 +568,22 @@ function buildDecorations(view, assetFor, linksEnabled, linkExists) {
     for (let n = first; n <= last; n++) activeLines.add(n);
   }
   const doc = view.state.doc;
+  const fmRange = frontmatterRange(view.state);
+  const fmEnd = fmRange ? fmRange.endLine : 0;
+  const fenced = fencedLines(doc);
 
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
     while (pos <= to) {
       const line = doc.lineAt(pos);
       const text = line.text;
+
+      // 元数据卡片与代码块由独立装饰处理，跳过它们的行内装饰（避免误染链接/标签/优先级）
+      if (line.number <= fmEnd || fenced.has(line.number)) {
+        pos = line.to + 1;
+        if (line.to >= to) break;
+        continue;
+      }
 
       if (!activeLines.has(line.number)) {
         const ranges = [];
@@ -453,6 +644,25 @@ function buildDecorations(view, assetFor, linksEnabled, linkExists) {
         for (const m of text.matchAll(/(^|[\s(（，。；：])#([\w\u3400-\u9fff/-]+)/g)) {
           const startAt = line.from + m.index + m[1].length;
           ranges.push({ from: startAt, to: startAt + 1 + m[2].length, deco: tagMark });
+        }
+
+        // 优先级 !pN → P 徽标
+        for (const m of text.matchAll(/(^|[\s(（，。；：])![pP]([0-9])(?=$|[\s)）\.,，。；：!])/g)) {
+          const startAt = line.from + m.index + m[1].length;
+          ranges.push({
+            from: startAt,
+            to: startAt + 3,
+            deco: Decoration.replace({ widget: new PriorityWidget(Number(m[2])) }),
+          });
+        }
+
+        // 行内代码浅底（反引号本身由下方 markHide 隐藏）
+        for (const m of text.matchAll(/`([^`]+)`/g)) {
+          const inner = m[1];
+          if (inner.length) {
+            const startAt = line.from + m.index + 1;
+            ranges.push({ from: startAt, to: startAt + inner.length, deco: inlineCodeMark });
+          }
         }
 
         for (const m of text.matchAll(/(\*\*|__|\*|_|`+|~~|^#{1,6}\s)/g)) {
@@ -530,6 +740,8 @@ export function create(opts) {
         syntaxHighlighting(highlight),
         livePreviewExtension(assetFor || ((p) => p), onToggleTodo, !!links, opts.linkExists || null),
         tableField,
+        frontmatterField,
+        lineField,
         hoverPreviewExtension(assetFor || ((p) => p), opts.previewFor || null),
         theme,
         keymap.of([

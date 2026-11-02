@@ -1049,6 +1049,28 @@ pre.patch {
   accent-color: var(--accent);
   cursor: pointer;
 }
+
+/* ---------------- 编辑态向预览看齐（#15.4） ---------------- */
+/* 标题：h1 下边框、h2 绿色短横与上留白，尽量贴近 .doc 预览 */
+.editor-host .cm-line.cm-h1 { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.editor-host .cm-line.cm-h2 {
+  padding-top: 16px;
+  background: linear-gradient(var(--accent), var(--accent)) no-repeat 0 6px / 22px 2px;
+}
+.editor-host .cm-line.cm-h3 { padding-top: 10px; }
+.editor-host .cm-line.cm-h4,
+.editor-host .cm-line.cm-h5,
+.editor-host .cm-line.cm-h6 { padding-top: 6px; }
+/* 已完成待办：删除线 + 变淡（预览里也是这样） */
+.editor-host .cm-line.cm-task-done { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+/* 代码块：整段浅底（围栏行 + 内容行） */
+.editor-host .cm-line.cm-code-fence,
+.editor-host .cm-line.cm-codeblock { background: var(--code-bg); }
+/* 行内代码浅底 */
+.editor-host .cm-inline-code { background: var(--code-bg); border-radius: 3px; padding: 0 2px; }
+/* 元数据卡片在编辑态的外观 */
+.editor-host .cm-meta-card { margin: 4px 0 12px; }
+.editor-host .cm-meta-card .meta-card { margin: 0; }
 .cm-img { display: inline-block; vertical-align: middle; }
 .cm-img img {
   max-width: 100%;
