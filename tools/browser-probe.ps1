@@ -391,7 +391,7 @@ try {
   if (& $want "schedadd") {
     Reload-Page $ws ($Url + "#/") 
     $script:cdpSeq++
-    $filled = Eval-Js $ws "(() => { const i = document.querySelector('.schedule .quick-add'); if (!i) return 'no-input'; i.scrollIntoView({ block: 'center' }); i.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(i, '11:00-11:30 闸门加的日程'); i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return 'dispatched'; })()" 
+    $filled = Eval-Js $ws "(() => { const row = document.querySelector('.schedule .schedule-add'); if (!row) return 'no-form'; const start = row.querySelector('input[type=time]'); const title = row.querySelector('.quick-add.title'); const btn = row.querySelector('.seg'); if (!start || !title || !btn) return 'no-inputs'; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; start.scrollIntoView({ block: 'center' }); setter.call(start, '11:00'); start.dispatchEvent(new Event('input', { bubbles: true })); setter.call(title, '闸门加的日程'); title.dispatchEvent(new Event('input', { bubbles: true })); btn.click(); return 'dispatched'; })()" 
     Start-Sleep -Milliseconds 2200
     $script:cdpSeq++
     $check = Eval-Js $ws "JSON.stringify({ filled: '$filled', added: !!Array.from(document.querySelectorAll('.slots .what')).find((e) => e.textContent.includes('闸门加的日程')), items: document.querySelectorAll('.slots li').length })" 

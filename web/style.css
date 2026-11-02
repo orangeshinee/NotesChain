@@ -725,6 +725,13 @@ body.wide .file-layout .wrap { max-width: none; flex: 1 1 auto; }
 .quick-add:focus { border-bottom-style: solid; border-bottom-color: var(--accent); }
 .quick-add:disabled { opacity: .5; cursor: not-allowed; }
 
+/* 新增日程：时间选择 + 标题 + 可选元信息（#15.3） */
+.schedule-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 0 12px; }
+.schedule-add .quick-add { width: auto; flex: 1 1 140px; }
+.schedule-add .quick-add.time { flex: 0 0 auto; width: auto; font-family: var(--font-mono); }
+.schedule-add .quick-add.meta { flex: 1 1 160px; }
+.schedule-add .seg { flex: 0 0 auto; }
+
 .schedule { margin-bottom: 34px; }
 .day { padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
 .day:last-child { border-bottom: none; }
@@ -961,6 +968,22 @@ pre.patch {
   white-space: pre;
 }
 .restore-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
+
+/* 提交详情：按文件折叠 + 增删着色（#10） */
+.commit-files { display: flex; flex-direction: column; gap: 10px; }
+.commit-file { border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--bg-side) 40%, transparent); }
+.commit-file-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; }
+.commit-file-path { flex: 1; font-family: var(--font-mono); font-size: var(--fs-md); overflow-wrap: anywhere; }
+.commit-file-stat { font-family: var(--font-mono); font-size: var(--fs-sm); }
+.commit-file-stat .diff-add-count { color: var(--accent); }
+.commit-file-stat .diff-del-count { color: var(--danger); margin-left: 8px; }
+.commit-file .diff { margin: 0; padding: 10px 12px; border-top: 1px solid var(--line-soft); background: var(--code-bg); border-radius: 0 0 var(--radius-sm) var(--radius-sm); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; overflow-x: auto; white-space: pre; }
+.diff-line { display: block; padding: 0 4px; }
+.diff-add { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.diff-del { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.diff-hunk { color: var(--muted); background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.diff-file { color: var(--faint); }
+.diff-ctx { color: var(--fg); }
 
 /* ---------------- 编辑器 ---------------- */
 .editor-host { min-height: 60vh; }

@@ -443,31 +443,62 @@ function buildSchedule(data) {
   }
   head.append(toggle);
 
-  const addInput = el('input', 'quick-add');
-  addInput.placeholder = '加一条日程，格式：15:00-16:00 会议 @地点（写入今天）';
-  addInput.addEventListener('keydown', async (event) => {
-    if (event.key !== 'Enter') return;
-    const text = addInput.value.trim();
-    if (!text) return;
-    addInput.disabled = true;
+  // 结构化新增日程（#15.3）：选开始/结束时间 + 标题 + 可选地点/标签，写入今天
+  const addRow = el('div', 'quick-add-row schedule-add');
+  const startInput = document.createElement('input');
+  startInput.type = 'time';
+  startInput.step = '300';
+  startInput.className = 'quick-add time';
+  startInput.title = '开始时间';
+  const endInput = document.createElement('input');
+  endInput.type = 'time';
+  endInput.step = '300';
+  endInput.className = 'quick-add time';
+  endInput.title = '结束时间（可选）';
+  const titleInput = el('input', 'quick-add title');
+  titleInput.placeholder = '日程标题';
+  const metaInput = el('input', 'quick-add meta');
+  metaInput.placeholder = '@地点 #标签（可选）';
+  const addBtn = el('button', 'seg active', '添加');
+  addBtn.type = 'button';
+  addRow.append(startInput, endInput, titleInput, metaInput, addBtn);
+
+  // 开始时间默认取当前时刻（向下取整到 5 分钟）
+  const now0 = new Date();
+  const m0 = now0.getMinutes() - (now0.getMinutes() % 5);
+  startInput.value = `${String(now0.getHours()).padStart(2, '0')}:${String(m0).padStart(2, '0')}`;
+
+  const submitSchedule = async () => {
+    const start = startInput.value;
+    const end = endInput.value;
+    const title = titleInput.value.trim();
+    if (!start) { window.alert('请选择开始时间'); return; }
+    if (!title) { window.alert('请填写日程标题'); return; }
+    if (end && end <= start) { window.alert('结束时间必须晚于开始时间'); return; }
+    const time = end ? `${start}-${end}` : start;
+    const extra = metaInput.value.trim();
+    const text = `${time} ${title}${extra ? ' ' + extra : ''}`;
+    addBtn.disabled = true;
     try {
       await api('/api/schedule/append', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
-      addInput.value = '';
       state.scheduleRange = 'today';
       await showHome();
-      const next = document.querySelector('.schedule .quick-add');
-      if (next) next.focus();
     } catch (err) {
-      addInput.disabled = false;
+      addBtn.disabled = false;
       window.alert('添加失败：' + (err.message || err));
     }
+  };
+  addBtn.addEventListener('click', submitSchedule);
+  titleInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submitSchedule();
+    }
   });
-  const addRow = el('div', 'quick-add-row');
-  addRow.append(addInput);
 
   section.append(head, addRow);
 
@@ -1912,41 +1943,90 @@ async function showCommit(hash) {
   main.append(wrap);
   try {
     const data = await api('/api/git/show?hash=' + encodeURIComponent(hash));
-    const files = Array.from(new Set(
-      Array.from(data.patch.matchAll(/^\+\+\+ b\/(.+?)\r?$/gm)).map((m) => m[1].trim())
-    ));
-    const bar = el('div', 'restore-bar');
-    if (files.length) {
-      bar.append(el('span', 'muted', '该提交涉及：'));
-      for (const file of files) {
-        const btn = el('button', 'seg', '恢复 ' + file);
-        btn.type = 'button';
-        btn.addEventListener('click', async () => {
-          if (!window.confirm(`把「${file}」恢复到该提交的版本？当前内容会被覆盖。`)) return;
-          btn.disabled = true;
-          try {
-            await api('/api/git/restore', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ hash, path: file }),
-            });
-            await loadSidebar();
-            btn.textContent = '已恢复';
-          } catch (err) {
-            btn.disabled = false;
-            window.alert('恢复失败：' + (err.message || err));
-          }
-        });
-        bar.append(btn);
-      }
+    const patch = data.patch || '';
+    const files = splitPatchFiles(patch);
+    if (!files.length) {
+      wrap.replaceChildren(el('div', 'empty-state', '（该提交没有文本差异）'));
+    } else {
+      const list = el('div', 'commit-files');
+      for (const f of files) list.append(buildCommitFile(f.file, f.chunk, hash));
+      wrap.replaceChildren(list);
     }
-    const pre = el('pre', 'patch');
-    pre.textContent = data.patch || '（该提交没有文本差异）';
-    wrap.replaceChildren(bar, pre);
     main.replaceChildren(docHead('提交', hash.slice(0, 8), ''), wrap);
   } catch (err) {
     wrap.replaceChildren(errorState(err));
   }
+}
+
+// 把一个提交的 patch 按文件拆开（#10：按文件折叠 + 增删着色，替代整段 diff）
+function splitPatchFiles(patch) {
+  const parts = String(patch || '').split(/^diff --git /m);
+  const out = [];
+  for (let i = 1; i < parts.length; i += 1) {
+    const chunk = 'diff --git ' + parts[i];
+    const m = /^\+\+\+ b\/(.+?)\r?$/m.exec(chunk) || /^--- a\/(.+?)\r?$/m.exec(chunk);
+    out.push({ file: m ? m[1].trim() : '(未知文件)', chunk });
+  }
+  return out;
+}
+function diffStat(chunk) {
+  let add = 0;
+  let del = 0;
+  for (const line of chunk.split('\n')) {
+    if (line.startsWith('+') && !line.startsWith('+++')) add += 1;
+    else if (line.startsWith('-') && !line.startsWith('---')) del += 1;
+  }
+  return { add, del };
+}
+function renderDiffLines(chunk) {
+  return chunk
+    .split('\n')
+    .map((line) => {
+      let cls = 'diff-ctx';
+      if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff --git') || line.startsWith('index ')) cls = 'diff-file';
+      else if (line.startsWith('@@')) cls = 'diff-hunk';
+      else if (line.startsWith('+')) cls = 'diff-add';
+      else if (line.startsWith('-')) cls = 'diff-del';
+      return `<span class="diff-line ${cls}">${esc(line) || ' '}</span>`;
+    })
+    .join('');
+}
+function buildCommitFile(file, chunk, hash) {
+  const details = el('details', 'commit-file');
+  const summary = el('summary', 'commit-file-head');
+  summary.append(el('span', 'commit-file-path', file));
+  const st = diffStat(chunk);
+  const stat = el('span', 'commit-file-stat');
+  stat.append(el('span', 'diff-add-count', '+' + st.add));
+  stat.append(el('span', 'diff-del-count', '−' + st.del));
+  summary.append(stat);
+  const restore = el('button', 'seg tiny', '恢复此文件');
+  restore.type = 'button';
+  restore.title = '把该文件恢复到本提交的版本（会覆盖当前内容）';
+  restore.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!window.confirm(`把「${file}」恢复到该提交的版本？当前内容会被覆盖。`)) return;
+    restore.disabled = true;
+    try {
+      await api('/api/git/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hash, path: file }),
+      });
+      await loadSidebar();
+      restore.textContent = '已恢复';
+    } catch (err) {
+      restore.disabled = false;
+      window.alert('恢复失败：' + (err.message || err));
+    }
+  });
+  summary.append(restore);
+  details.append(summary);
+  const pre = el('pre', 'diff');
+  pre.innerHTML = renderDiffLines(chunk);
+  details.append(pre);
+  return details;
 }
 // ---------------------------------------------------------------- 外部改动轮询
 
