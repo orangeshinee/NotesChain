@@ -4,8 +4,6 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
-
 use crate::markdown;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -116,11 +114,12 @@ pub fn atomic_write(path: &Path, content: &str) -> anyhow::Result<()> {
     let tmp = temp_path(path);
     {
         let mut file = fs::File::create(&tmp)
-            .with_context(|| format!("创建临时文件失败: {}", tmp.display()))?;
+            .map_err(|e| anyhow::anyhow!("创建临时文件失败: {}: {}", tmp.display(), e))?;
         file.write_all(content.as_bytes())?;
         file.sync_all()?;
     }
-    fs::rename(&tmp, path).with_context(|| format!("替换目标文件失败: {}", path.display()))?;
+    fs::rename(&tmp, path)
+        .map_err(|e| anyhow::anyhow!("替换目标文件失败: {}: {}", path.display(), e))?;
     Ok(())
 }
 
