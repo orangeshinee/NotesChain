@@ -597,6 +597,9 @@ function buildTodoSection(todos, onShowAll) {
   head.append(el('h2', '', '待办'));
   head.append(el('span', 'muted', state.todoStatus === 'done' ? `${todos.total} 条已完成` : `${todos.total} 条未完成`));
 
+  // 控件统一靠右（#13）：标签筛选 + 排序 + 状态切换放进一个右侧工具条
+  const controls = el('div', 'todo-controls');
+
   const filter = el('select', 'todo-filter');
   filter.append(el('option', '', '全部标签'));
   filter.lastChild.value = '';
@@ -610,7 +613,7 @@ function buildTodoSection(todos, onShowAll) {
     state.todoTag = filter.value;
     refreshTodoSection();
   });
-  head.append(filter);
+  controls.append(filter);
 
   const sortSel = el('select', 'todo-filter');
   for (const [value, label] of [['default', '默认排序'], ['priority', '按优先级']]) {
@@ -623,7 +626,7 @@ function buildTodoSection(todos, onShowAll) {
     state.todoSort = sortSel.value;
     refreshTodoSection();
   });
-  head.append(sortSel);
+  controls.append(sortSel);
 
   const toggle = el('span', 'segmented');
   for (const [value, label] of [['open', '未完成'], ['done', '已完成'], ['all', '全部']]) {
@@ -635,7 +638,8 @@ function buildTodoSection(todos, onShowAll) {
     });
     toggle.append(btn);
   }
-  head.append(toggle);
+  controls.append(toggle);
+  head.append(controls);
 
   const addInput = el('input', 'quick-add');
   addInput.placeholder = state.todoStatus === 'done'

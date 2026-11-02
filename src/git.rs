@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tokio::sync::{mpsc, Mutex};
 
-const DEBOUNCE: Duration = Duration::from_secs(30);
-const FORCE_AFTER: Duration = Duration::from_secs(300);
+// 自动提交默认：最后一次变更后 5 分钟合并提交；连续编辑 30 分钟强制提交一次。
+// 可经 --commit-debounce / --commit-force 覆盖（见 main.rs）。
 
 #[derive(Debug, Default, Clone)]
 pub struct Runtime {
@@ -47,7 +47,7 @@ pub struct GitStatus {
 
 impl Git {
     /// 启动检测 + 自动 init + 起提交协程。
-    pub fn start(root: PathBuf, enabled: bool) -> Arc<Git> {
+    pub fn start(root: PathBuf, enabled: bool, debounce_secs: u64, force_secs: u64) -> Arc<Git> {
         if !enabled {
             return Arc::new(Git {
                 root,
@@ -86,8 +86,10 @@ impl Git {
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 let worker_root = root.clone();
                 let state = runtime.clone();
+                let debounce = Duration::from_secs(debounce_secs.max(1));
+                let force_after = Duration::from_secs(force_secs.max(1));
                 handle.spawn(async move {
-                    worker(rx, worker_root, repo, state).await;
+                    worker(rx, worker_root, repo, state, debounce, force_after).await;
                 });
             }
         }
@@ -138,6 +140,8 @@ async fn worker(
     scope_root: PathBuf,
     repo_root: PathBuf,
     state: Arc<Mutex<Runtime>>,
+    debounce: Duration,
+    force_after: Duration,
 ) {
     loop {
         // 等第一次变更
@@ -147,10 +151,10 @@ async fn worker(
         let first = Instant::now();
         let mut last = Instant::now();
 
-        // 防抖：最后一次变更后 30 秒，或累计 5 分钟强制提交
+        // 防抖：最后一次变更后 debounce，或累计 force_after 强制提交
         loop {
-            let until_debounce = DEBOUNCE.saturating_sub(last.elapsed());
-            let until_force = FORCE_AFTER.saturating_sub(first.elapsed());
+            let until_debounce = debounce.saturating_sub(last.elapsed());
+            let until_force = force_after.saturating_sub(first.elapsed());
             let wait = until_debounce.min(until_force);
             if wait.is_zero() {
                 break;

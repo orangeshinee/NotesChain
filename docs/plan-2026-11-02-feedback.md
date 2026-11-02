@@ -303,6 +303,13 @@
 - ✅ **#3 预览双击进编辑**：预览 `dblclick` 进入编辑并置 `autoPreviewOnSave`，Ctrl+S 保存成功后自动回到预览（自动保存不会跳）。
 - 验证：`cargo test` 33 passed、clippy 0 warning、`release-gate`（**含浏览器 + Playwright e2e**）**24 项全 PASS**。
 
+### 第三批 P2-配置类（代码已完成；full release-gate 24 项全绿）
+
+- ✅ **#13 首页待办控件靠右**：`buildTodoSection` 把标签筛选 / 排序 / 状态切换包进 `.todo-controls`，整组 `margin-left:auto` 靠右（消除之前每个控件各自 `auto` 造成的居中分布）。
+- ✅ **#14 Git 提交时基可配**：默认防抖改为 **300s（5 分钟）**、连续编辑 1800s 强制提交；新增启动参数 `--commit-debounce` / `--commit-force`（秒），并在 `/api/config` 暴露 `commitDebounce/commitForce`。（自动保存 800ms、轮询 5s 保持不变。）
+- ✅ **#12a 本地 `--no-token`**：新增启动参数 `--no-token`，默认仍校验 token；开启后不鉴权、启动日志显著告警。HTTP 已验证：无 token 访问 `/` 返回 200、`/api/*` 放行；未开启时无 cookie 仍 401。
+- 验证：`cargo test` 33 passed / clippy 0 / release-gate **24 项全 PASS**。
+
 ### 待办（后续批次）
 
-- P2：13（控件仅靠右）、14（Git 提交默认 5 分钟可配）、12a（`--no-token`）、10（历史 diff）、15.3（日程时间选择）、11（接口文档）、12b（标签联想）、15.1（配置界面：字体/字号/主题）；15.2（模板）、15.4（样式大改）暂缓。
+- P2 剩余：10（历史 diff 友善化）、15.3（新增日程时间选择）、11（接口文档）、12b（标签联想）、15.1（配置界面：字体/字号/主题）；15.2（模板）、15.4（样式大改）暂缓。

@@ -34,12 +34,31 @@ struct Args {
     /// 关闭 Git 自动提交（PRD 6.4：同步盘等场景可单独关闭，其余功能保留）
     #[arg(long, default_value_t = false)]
     no_git: bool,
+
+    /// 禁用 token 鉴权（仅建议个人独占机器使用；默认仍校验 token）
+    #[arg(long, default_value_t = false)]
+    no_token: bool,
+
+    /// Git 自动提交防抖间隔（秒），默认 300（停止变更 5 分钟后合并提交一次）
+    #[arg(long, default_value_t = 300)]
+    commit_debounce: u64,
+
+    /// 连续编辑时强制提交间隔（秒），默认 1800（30 分钟）
+    #[arg(long, default_value_t = 1800)]
+    commit_force: u64,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let state = state::AppState::new(args.dir, args.links, !args.no_git)?;
+    let state = state::AppState::new(
+        args.dir,
+        args.links,
+        !args.no_git,
+        args.no_token,
+        args.commit_debounce,
+        args.commit_force,
+    )?;
 
     let warnings = state.rebuild_index().await?;
     println!("  笔记目录：{}", state.notes_root.display());
@@ -57,8 +76,13 @@ async fn main() -> anyhow::Result<()> {
 
     println!("NotesChain 已启动");
     println!("  索引：{file_count} 个 Markdown 文件，{todo_count} 条未完成待办");
-    println!("  打开：http://127.0.0.1:{}/?token={}", args.port, state.token);
-    println!("  （token 只存在于本次进程，重启后需用新地址重新打开）");
+    if state.token.is_empty() {
+        println!("  打开：http://127.0.0.1:{}/", args.port);
+        println!("  ⚠ 已用 --no-token 关闭鉴权，仅建议在个人独占机器使用");
+    } else {
+        println!("  打开：http://127.0.0.1:{}/?token={}", args.port, state.token);
+        println!("  （token 只存在于本次进程，重启后需用新地址重新打开）");
+    }
 
     axum::serve(listener, app).await?;
     Ok(())

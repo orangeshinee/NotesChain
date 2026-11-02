@@ -18,8 +18,13 @@ pub struct AppState {
     pub notes_root: PathBuf,
     /// 附件目录：`<root>/assets`（存在时），否则 notes_root/assets
     pub assets_root: PathBuf,
-    /// 本次进程的启动 token（不落盘，PRD 9.1）
+    /// 本次进程的启动 token（不落盘，PRD 9.1）；`--no-token` 时为空串，表示不鉴权
     pub token: String,
+    /// 是否禁用 token 鉴权（--no-token）
+    pub no_token: bool,
+    /// Git 自动提交防抖 / 强制提交间隔（秒），供界面展示
+    pub commit_debounce: u64,
+    pub commit_force: u64,
     pub index: RwLock<Index>,
     /// Git 自动提交调度
     pub git: Arc<Git>,
@@ -32,7 +37,14 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(root: PathBuf, links: bool, git_enabled: bool) -> anyhow::Result<Arc<Self>> {
+    pub fn new(
+        root: PathBuf,
+        links: bool,
+        git_enabled: bool,
+        no_token: bool,
+        commit_debounce: u64,
+        commit_force: u64,
+    ) -> anyhow::Result<Arc<Self>> {
         let root = root
             .canonicalize()
             .with_context(|| format!("笔记目录不可访问: {}", root.display()))?;
@@ -53,12 +65,15 @@ impl AppState {
         } else {
             notes_root.join("assets")
         };
-        let git = Git::start(root.clone(), git_enabled);
+        let git = Git::start(root.clone(), git_enabled, commit_debounce, commit_force);
         Ok(Arc::new(AppState {
             root,
             notes_root,
             assets_root,
-            token: new_token(),
+            token: if no_token { String::new() } else { new_token() },
+            no_token,
+            commit_debounce,
+            commit_force,
             index: RwLock::new(Index::default()),
             git,
             revision: std::sync::atomic::AtomicU64::new(0),
@@ -166,7 +181,7 @@ mod tests {
     use super::*;
 
     fn state_for(dir: &Path) -> Arc<AppState> {
-        AppState::new(dir.to_path_buf(), false, true).unwrap()
+        AppState::new(dir.to_path_buf(), false, true, false, 300, 1800).unwrap()
     }
 
     #[test]

@@ -163,6 +163,10 @@ fn cookie_token(headers: &HeaderMap) -> Option<String> {
 }
 
 async fn auth(State(st): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+    // --no-token：进程启动时 token 为空串，直接放行（仅建议个人独占机器）
+    if st.token.is_empty() {
+        return next.run(req).await;
+    }
     match cookie_token(req.headers()) {
         Some(token) if token == st.token => next.run(req).await,
         _ => ApiError::new(
@@ -180,6 +184,10 @@ struct RootQuery {
 }
 
 async fn root(State(st): State<Arc<AppState>>, Query(q): Query<RootQuery>, headers: HeaderMap) -> Response {
+    // --no-token：不鉴权，直接返回页面
+    if st.token.is_empty() {
+        return Html(INDEX_HTML).into_response();
+    }
     let has_valid_cookie = cookie_token(&headers).as_deref() == Some(st.token.as_str());
     if let Some(token) = q.token {
         // 已带有效 Cookie 时，再来 ?token= 一律拒绝重复引导（PRD 9.1），直接回干净地址
@@ -409,6 +417,9 @@ async fn config(State(st): State<Arc<AppState>>) -> Json<Value> {
         "duplicateNames": conflicts,
         "largeAssets": big_files,
         "syncDrive": detect_sync_drive(&st.root),
+        "noToken": st.no_token,
+        "commitDebounce": st.commit_debounce,
+        "commitForce": st.commit_force,
         "root": st.root.display().to_string(),
     }))
 }

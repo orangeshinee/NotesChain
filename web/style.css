@@ -703,6 +703,11 @@ body.wide .file-layout .wrap { max-width: none; flex: 1 1 auto; }
 .section-head .segmented { margin-left: auto; }
 .section-head .todo-filter { margin-left: auto; }
 
+/* 首页待办控件整组靠右（#13）：组内控件不再各自 auto，消除“居中分布” */
+.todo-controls { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.todo-controls .todo-filter,
+.todo-controls .segmented { margin-left: 0; }
+
 .quick-add-row { padding: 0 0 12px; }
 .quick-add {
   width: 100%;
