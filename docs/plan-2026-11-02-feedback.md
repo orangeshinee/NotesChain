@@ -316,6 +316,12 @@
 - ✅ **#15.3 新增日程时间选择**：首页「新增日程」由手写文本改为`<input type=time>`开始/结束 + 标题 + `@地点 #标签`（可选）+ 添加按钮；前端校验开始必填、结束须晚于开始；开始默认取当前时刻（向下取整 5 分钟）。同步更新 `browser-probe` 的 `schedadd` 场景。
 - 验证：`cargo test` 33 passed / clippy 0 / release-gate **24 项全 PASS**（`schedadd` 通过新表单添加成功）。
 
+### 第五批 P2（#15.1 配置界面 + #12b 标签联想；full release-gate 25 项全绿）
+
+- ✅ **#15.1 配置界面**：侧边栏「⋯ → 设置」弹层，可配置**字体**（纸感/全宋体/全黑体）、**字号**（14/15/16/17.5）、**主题**（跟随系统/浅色/深色）；存 `localStorage`，`boot()` 先 `applyAppearance()` 避免闪烁；`html[data-theme]` + CSS 变量实现手动主题覆盖系统偏好。
+- ✅ **#12b 标签联想**：编辑器引入 `@codemirror/autocomplete`，输入 `#前缀` 时从 `/api/tags` 已有标签里补全；`web/package.json` 加依赖，已 `npm run build` 重新打包 `dist/editor.js`（544.5kb）。
+- 验证：`cargo test` 33 / clippy 0 / release-gate **25 项全 PASS**（新增 `settings` 场景：`modalOpen/selects:3/themeApplied`）。标签联想为编辑器内交互，闸门未做逐字输入自动化，建议手动在编辑态输入 `#` 验证。
+
 ### 待办（后续批次）
 
-- P2 剩余：11（接口文档 `docs/api.md`）、12b（标签联想，需 `@codemirror/autocomplete` + `npm run build`）、15.1（配置界面：字体/字号/主题）；15.2（模板）、15.4（样式大改）暂缓。
+- P2 剩余：11（接口文档 `docs/api.md`）；15.2（模板）、15.4（样式大改）暂缓。

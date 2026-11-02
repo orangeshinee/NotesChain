@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "clicks", "tagtoggle", "scrollkeep", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "settings", "clicks", "tagtoggle", "scrollkeep", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [int]$DebugPort = 9333
@@ -386,6 +386,34 @@ try {
 })()
 '@
     $results += "export => " + (Eval-Js $ws $js )
+  }
+
+  if (& $want "settings") {
+    Reload-Page $ws ($Url + "#/")
+    $script:cdpSeq++
+    $js = @'
+(async () => {
+  const btn = document.getElementById('settings');
+  if (!btn) return 'no-settings-button';
+  btn.click();
+  await new Promise((r) => setTimeout(r, 300));
+  const modal = document.querySelector('.settings-modal');
+  const selects = modal ? modal.querySelectorAll('select').length : 0;
+  let themeApplied = false;
+  const themeSel = modal ? modal.querySelectorAll('select')[2] : null;
+  if (themeSel) {
+    themeSel.value = 'dark';
+    themeSel.dispatchEvent(new Event('change', { bubbles: true }));
+    themeApplied = document.documentElement.getAttribute('data-theme') === 'dark';
+    themeSel.value = 'auto';
+    themeSel.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  const modalOpen = !!document.querySelector('.settings-modal');
+  if (modal && modal.closest('.modal-mask')) modal.closest('.modal-mask').remove();
+  return JSON.stringify({ modalOpen, selects, themeApplied });
+})()
+'@
+    $results += "settings => " + (Eval-Js $ws $js)
   }
 
   if (& $want "schedadd") {

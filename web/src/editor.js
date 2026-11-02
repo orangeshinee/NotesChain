@@ -12,6 +12,7 @@ import {
   hoverTooltip,
 } from '@codemirror/view';
 import { EditorState, RangeSetBuilder, StateField } from '@codemirror/state';
+import { autocompletion } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
@@ -490,11 +491,29 @@ function livePreviewExtension(assetFor, onToggleTodo, linksEnabled, linkExists) 
   return ViewPlugin.fromClass(LivePreviewPlugin, { decorations: (v) => v.decorations });
 }
 
+/** 标签联想（#12b）：输入 `#前缀` 时从已有标签里补全。 */
+function tagCompletion(tags) {
+  const list = Array.isArray(tags) ? tags : [];
+  return (context) => {
+    const match = context.matchBefore(/#[\w\u3400-\u9fff/-]*/);
+    if (!match) return null;
+    // 只有光标前是 # 开头的词才提示
+    if (match.from === match.to && !context.explicit) return null;
+    const prefix = match.text.replace(/^#/, '').toLowerCase();
+    const options = list
+      .filter((t) => !prefix || t.toLowerCase().includes(prefix))
+      .slice(0, 50)
+      .map((t) => ({ label: '#' + t, apply: '#' + t }));
+    if (!options.length) return null;
+    return { from: match.from, options, validFor: /^#[\w\u3400-\u9fff/-]*$/ };
+  };
+}
+
 /**
  * @param {{parent: HTMLElement, doc: string, onChange?: Function, onSave?: Function, onToggleTodo?: Function, assetFor?: (path:string)=>string}} opts
  */
 export function create(opts) {
-  const { parent, doc, onChange, onSave, onToggleTodo, assetFor, links, onOpenLink } = opts;
+  const { parent, doc, onChange, onSave, onToggleTodo, assetFor, links, onOpenLink, tags } = opts;
   openLinkHandler = onOpenLink || null;
   linkHandler = opts.onOpenHref || null;
   const view = new EditorView({
@@ -507,6 +526,7 @@ export function create(opts) {
         highlightActiveLine(),
         EditorView.lineWrapping,
         markdown({ base: markdownLanguage, addKeymap: true }),
+        autocompletion({ override: [tagCompletion(tags)] }),
         syntaxHighlighting(highlight),
         livePreviewExtension(assetFor || ((p) => p), onToggleTodo, !!links, opts.linkExists || null),
         tableField,

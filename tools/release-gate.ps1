@@ -93,7 +93,7 @@ if (-not $SkipBrowser) {
     if (-not $token) { throw "服务未就绪" }
     $hash = "#/file/" + [uri]::EscapeDataString($relPosix)
     # 逐个场景跑（而不是 all）：一次长会话里跑全部时 Edge 偶发崩溃，逐场景更稳也更易定位
-    $scenarios = @('hover','todo','autosave','conflict','search','tag','preview','virtual','clicks','quickadd','schedjump','export','schedadd','resize','tagtoggle','scrollkeep')
+    $scenarios = @('hover','todo','autosave','conflict','search','tag','preview','virtual','clicks','quickadd','schedjump','export','settings','schedadd','resize','tagtoggle','scrollkeep')
     $probeText = ''
     $probeCode = 0
     foreach ($sc in $scenarios) {
@@ -123,6 +123,9 @@ if (-not $SkipBrowser) {
       }
       if ($name -eq 'export') {
         $ok = $ok -and $value -match '"exportButtons":0'
+      }
+      if ($name -eq 'settings') {
+        $ok = $ok -and $value -match '"modalOpen":true' -and $value -match '"selects":3' -and $value -match '"themeApplied":true'
       }
       Record "浏览器：$($c.Groups[1].Value)" $ok $value.Substring(0, [Math]::Min(70, $value.Length))
     }

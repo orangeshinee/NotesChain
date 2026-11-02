@@ -1143,6 +1143,7 @@ async function showFile(path, line) {
 
   currentEditor = makeEditor(host, data.content, {
     onChange: scheduleSave,
+    tags: flattenTags((state.tags && state.tags.tree) || []),
     onSave: () => {
       clearTimeout(saveTimer);
       const wasAuto = autoPreviewOnSave;
@@ -2152,6 +2153,116 @@ if (moreToggle && moreMenu) {
   window.addEventListener('hashchange', () => setMoreOpen(false));
 }
 
+// ---------------------------------------------------------------- 外观设置（#15.1）
+
+const FONT_PRESETS = {
+  // 纸感：正文黑体、标题宋体（当前默认）
+  paper: {
+    ui: '"Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
+    read: '"Songti SC", "Noto Serif SC", "SimSun", serif',
+  },
+  serif: {
+    ui: '"Noto Serif SC", "Songti SC", "SimSun", serif',
+    read: '"Noto Serif SC", "Songti SC", "SimSun", serif',
+  },
+  sans: {
+    ui: '"Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
+    read: '"Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
+  },
+};
+const FONT_SIZES = ['14', '15', '16', '17.5'];
+
+function readPref(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value;
+  } catch (err) {
+    return fallback;
+  }
+}
+
+// 应用字体 / 字号 / 主题；主题靠 html[data-theme]，字体字号靠 :root 变量覆盖
+function applyAppearance() {
+  const theme = readPref('nc.theme', 'auto');
+  if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', theme);
+  const font = FONT_PRESETS[readPref('nc.font', 'paper')] || FONT_PRESETS.paper;
+  document.documentElement.style.setProperty('--font-ui', font.ui);
+  document.documentElement.style.setProperty('--font-read', font.read);
+  const size = readPref('nc.fontSize', '15');
+  document.documentElement.style.setProperty('--fs-base', size + 'px');
+}
+
+function openSettingsDialog() {
+  const mask = el('div', 'modal-mask');
+  const box = el('div', 'modal settings-modal');
+  box.append(el('h2', '', '外观设置'));
+
+  const makeSelect = (options, current) => {
+    const sel = el('select', 'todo-filter');
+    for (const [value, label] of options) {
+      const opt = el('option', '', label);
+      opt.value = value;
+      sel.append(opt);
+    }
+    sel.value = current;
+    return sel;
+  };
+
+  const fontRow = el('label', 'form-row');
+  fontRow.append(el('span', '', '字体'));
+  const fontSel = makeSelect(
+    [['paper', '纸感（正文黑体 / 标题宋体）'], ['serif', '全宋体'], ['sans', '全黑体']],
+    readPref('nc.font', 'paper')
+  );
+  fontRow.append(fontSel);
+
+  const sizeRow = el('label', 'form-row');
+  sizeRow.append(el('span', '', '字号'));
+  const sizeSel = makeSelect(
+    FONT_SIZES.map((s) => [s, s + 'px']),
+    readPref('nc.fontSize', '15')
+  );
+  sizeRow.append(sizeSel);
+
+  const themeRow = el('label', 'form-row');
+  themeRow.append(el('span', '', '主题'));
+  const themeSel = makeSelect(
+    [['auto', '跟随系统'], ['light', '浅色'], ['dark', '深色']],
+    readPref('nc.theme', 'auto')
+  );
+  themeRow.append(themeSel);
+
+  const persist = () => {
+    try {
+      localStorage.setItem('nc.font', fontSel.value);
+      localStorage.setItem('nc.fontSize', sizeSel.value);
+      localStorage.setItem('nc.theme', themeSel.value);
+    } catch (err) {
+      /* 隐私模式可能不可用 */
+    }
+    applyAppearance();
+  };
+  fontSel.addEventListener('change', persist);
+  sizeSel.addEventListener('change', persist);
+  themeSel.addEventListener('change', persist);
+
+  const actions = el('div', 'modal-actions');
+  const done = el('button', 'seg active', '完成');
+  done.type = 'button';
+  done.addEventListener('click', () => mask.remove());
+  actions.append(done);
+  box.append(fontRow, sizeRow, themeRow, actions);
+  mask.append(box);
+  mask.addEventListener('click', (event) => {
+    if (event.target === mask) mask.remove();
+  });
+  document.body.append(mask);
+}
+
+const settingsBtn = document.getElementById('settings');
+if (settingsBtn) settingsBtn.addEventListener('click', openSettingsDialog);
+
 async function openNewNoteDialog() {
   let templates = [];
   try {
@@ -2361,6 +2472,7 @@ document.addEventListener('click', (event) => {
 });
 async function boot() {
   try {
+    applyAppearance(); // 先应用字体/字号/主题，避免首屏闪烁
     try {
       const savedTagSort = localStorage.getItem('nc.tagSort');
       if (savedTagSort) state.tagSort = savedTagSort;

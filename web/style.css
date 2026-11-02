@@ -50,7 +50,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #16181a;
     --bg-side: #1b1e20;
     --fg: #e4e0d8;
@@ -71,6 +71,29 @@
     --warn-icon: #c2683f;
     --danger: #ff9b8e;
   }
+}
+
+/* 手动深色主题（设置里选「深色」时生效，覆盖系统偏好）（#15.1） */
+:root[data-theme="dark"] {
+  --bg: #16181a;
+  --bg-side: #1b1e20;
+  --fg: #e4e0d8;
+  --muted: #9aa2a9;
+  --faint: #8b9299;
+  --line: #2b2f32;
+  --line-soft: #24282b;
+  --accent: #7fbf9b;
+  --accent-soft: #1e2a24;
+  --chip-bg: #1f2a25;
+  --chip-fg: #86c3a3;
+  --code-bg: #1d2124;
+  --mark: #4a4020;
+
+  --warn-bg: #2a211b;
+  --warn-line: #3d2f26;
+  --warn-fg: #e6b28a;
+  --warn-icon: #c2683f;
+  --danger: #ff9b8e;
 }
 
 /* ---------------- 基础 ---------------- */
