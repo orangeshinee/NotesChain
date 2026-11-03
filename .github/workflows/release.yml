@@ -6,20 +6,72 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的 tag（例如 v0.1.0）。tag 需先推到远端。"
+        description: "已存在的 tag（例如 v0.1.1）。tag 需先推到远端；从默认分支构建。"
         required: true
         type: string
 
+# 手动重跑时也按 tag 分组，避免不同 tag 的发布互相顶掉
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # 单 job 负责「解析 tag / 校验版本 / 预建 Release」。
+  # 两个平台并行上传，不再各自判断要不要 create Release —— 那会竞争。
+  prepare:
+    name: 校验版本并准备 Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 解析 tag
+        id: meta
+        shell: bash
+        run: |
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then tag="${{ github.ref_name }}"; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: 校验 tag 与 Cargo.toml / Cargo.lock 版本一致
+        shell: bash
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          ver=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          lock=$(awk '/^name = "noteschain"$/{getline; print; exit}' Cargo.lock | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "tag=$TAG  Cargo.toml=$ver  Cargo.lock=$lock"
+          if [ "$TAG" != "v$ver" ]; then
+            echo "::error::tag $TAG 与 Cargo.toml 的 $ver 不一致（应为 v$ver）。打 tag 前请先同步 bump Cargo.toml 与 Cargo.lock。"
+            exit 1
+          fi
+          if [ "$ver" != "$lock" ]; then
+            echo "::error::Cargo.toml ($ver) 与 Cargo.lock ($lock) 不同步；--locked 会失败。"
+            exit 1
+          fi
+
+      - name: 预建 Release（不存在时）
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，跳过创建"
+          else
+            gh release create "$TAG" --verify-tag --title "NotesChain $TAG" --generate-notes
+          fi
+
   windows-x64:
     name: 打包并发布 Windows x64
+    needs: prepare
     runs-on: windows-latest
     timeout-minutes: 40
     permissions:
@@ -47,9 +99,10 @@ jobs:
       - name: 打包
         id: pack
         shell: pwsh
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          $tag = "${{ inputs.tag }}"
-          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
+          $tag = "$env:TAG"
           $name = "noteschain-$tag-windows-x64"
 
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -60,25 +113,66 @@ jobs:
           $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $name.zip" | Set-Content "$name.zip.sha256" -Encoding utf8
 
-          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "zip=$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: 发布到 GitHub Release
+      - name: 上传资产
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          $tag = "${{ steps.pack.outputs.tag }}"
           $zip = "${{ steps.pack.outputs.zip }}"
           $assets = @($zip, "$zip.sha256", "target/release/noteschain.exe")
+          gh release upload "$env:TAG" $assets --clobber
+          gh release view "$env:TAG" --json url --jq .url
 
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            # tag 已发过 release：覆盖资产，允许从手动重跑补传
-            gh release upload $tag $assets --clobber
-          } else {
-            gh release create $tag --verify-tag --title "NotesChain $tag" --generate-notes $assets
-          }
+  linux-x64:
+    name: 打包并发布 Linux x64
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-          gh release view $tag --json url --jq .url
+      - name: Rust 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 构建（release）
+        run: cargo build --release --locked
+
+      - name: 单元测试
+        run: cargo test --locked
+
+      - name: 冒烟（--version / --help）
+        shell: bash
+        run: |
+          ./target/release/noteschain --version
+          ./target/release/noteschain --help >/dev/null
+
+      - name: 打包
+        id: pack
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          name="noteschain-$TAG-linux-x64"
+          mkdir -p "dist/$name"
+          cp target/release/noteschain "dist/$name/"
+          cp README.md "dist/$name/"
+          tar czf "$name.tar.gz" -C dist "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          echo "tar=$name.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: 上传资产
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          TAR: ${{ steps.pack.outputs.tar }}
+        run: |
+          gh release upload "$TAG" "$TAR" "$TAR.sha256" "target/release/noteschain" --clobber
+          gh release view "$TAG" --json url --jq .url

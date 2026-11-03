@@ -5,19 +5,22 @@
 
 ## 一、构建与分发
 
-单文件可执行程序，前端与编辑器资源全部编译期内嵌，分发时只需要一个 exe。
+单文件可执行程序，前端与编辑器资源全部编译期内嵌。
+
+| 平台 | 构建命令 | 产物 | 体积 |
+| --- | --- | --- | --- |
+| Windows x64 | `cargo build --release --locked` | `target\release\noteschain.exe` | 约 3.9 MB |
+| Linux x64 | `cargo build --release --locked` | `target/release/noteschain` | 约 3.9 MB |
+
+前端编辑器产物已随仓库提交，只有改过 `web/src/editor.js` 才需要重新打包：
 
 ```powershell
-# 1) 前端编辑器（产物已提交，改过 web/src/editor.js 才需要）
 cd web; npm install; npm run build; cd ..
-
-# 2) 后端
-cargo build --release
 ```
 
-产物：`target\release\noteschain.exe`（当前约 3.2 MB）。
+运行环境：Windows 10/11（x64）、Linux x64。**运行时唯一外部依赖是 git**（不装则版本历史停用，其余功能正常）；前端无构建产物时也能跑（编辑器回退为纯文本域）。
 
-运行环境：Windows 10/11（x64）。**运行时唯一外部依赖是 git**；前端无构建产物时也能跑（编辑器回退为纯文本域）。
+GitHub Actions 在推 `v*` tag 时自动构建并发布两个平台的压缩包与 sha256，见 `README.md` 的「发布」段。
 
 ## 二、启动与访问
 
@@ -76,10 +79,14 @@ http://127.0.0.1:8090/?token=<64位随机串>
 按顺序做完再发：
 
 ```powershell
+# 发布前置（必须）：同步 bump Cargo.toml 与 Cargo.lock 的 version，
+# 且即将打的 tag 必须等于 v<version>（CI 会校验，不一致直接失败）。
+# 例：version = "0.1.2" → git tag v0.1.2
+
 # 0) 一条命令跑完全部自动验证（构建 / 单测 / clippy / 冒烟 / 边界 / 平替预演 / 13 项浏览器交互）
 pwsh -File tools\release-gate.ps1
 
-# 1) 单元测试（25 项）
+# 1) 单元测试（33 项）
 cargo test
 
 # 2) 静态检查

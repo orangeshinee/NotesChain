@@ -55,14 +55,30 @@ pwsh -File tools/release-gate.ps1
 
 ## 发布
 
-推送 `v*` tag 会自动构建并发布到 GitHub Releases：
+推送 `v*` tag 会自动构建 **Windows / Linux 两个平台**的产物并发布到 GitHub Releases。
 
-```powershell
-git tag v0.1.0
-git push origin v0.1.0
+**打 tag 前必须先同步 bump `Cargo.toml` 与 `Cargo.lock` 里的 `version`**——两处必须一致，且 `v<版本>` 必须等于 tag。CI 会校验，不一致直接失败；只改 `Cargo.toml` 不改 `Cargo.lock` 也会让 `--locked` 构建失败。
+
+```bash
+# 1) 同步把 Cargo.toml / Cargo.lock 的 version 改到 0.1.2，提交并推送
+# 2) 打 tag
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
-产物：`noteschain-v0.1.0-windows-x64.zip`（exe + README）、同名 `.sha256` 校验文件，以及未打包的 `noteschain.exe`。push / PR 会自动跑 CI（release 构建 + 单元测试 + clippy 零警告）。
+| 平台 | 产物 |
+| --- | --- |
+| Windows x64 | `noteschain-v0.1.2-windows-x64.zip`（exe + README）、同名 `.sha256`、未打包的 `noteschain.exe` |
+| Linux x64 | `noteschain-v0.1.2-linux-x64.tar.gz`（二进制 + README）、同名 `.sha256`、未打包的 `noteschain` |
+
+CI（push / PR）在 Windows 与 Ubuntu 双平台跑 release 构建 + 单元测试 + clippy 零警告。已发布的 tag 可以在 Actions → Release → `workflow_dispatch` 填 tag 重跑，补传或覆盖资产。
+
+本地构建 Linux 版：
+
+```bash
+cargo build --release --locked
+./target/release/noteschain --dir /path/to/notes --port 8090
+```
 
 ## 文档
 
@@ -79,8 +95,10 @@ git push origin v0.1.0
 
 ## 环境
 
-Rust stable（MSVC 工具链）+ VS 2022 Build Tools；运行期建议装 git（用于版本历史）。
-crates 走 rsproxy 镜像，配置见 `~/.cargo/config.toml`。
+- Windows：Rust stable（MSVC 工具链）+ VS 2022 Build Tools。
+- Linux：Rust stable 即可（已在 Rust 1.94 / Ubuntu 上验证构建与运行）。
+- 运行期建议装 git（用于版本历史）；不装则版本历史停用，其余功能正常。
+- crates 走 rsproxy 镜像，配置见 `~/.cargo/config.toml`；无该配置时需要能访问 crates.io。
 
 编辑器需要打包（产物已提交；改 `web/src/editor.js` 后才需要重建）：
 
