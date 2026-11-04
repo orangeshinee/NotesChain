@@ -1,7 +1,7 @@
 # NotesChain 发布说明与操作手册
 
-适用版本：v0.1（对应 commit 见 `git log`）  
-更新日期：2026-11-01
+适用版本：v0.1.1（对应 commit 见 `git log`）  
+更新日期：2026-11-04
 
 ## 一、构建与分发
 
@@ -10,7 +10,7 @@
 | 平台 | 构建命令 | 产物 | 体积 |
 | --- | --- | --- | --- |
 | Windows x64 | `cargo build --release --locked` | `target\release\noteschain.exe` | 约 3.9 MB |
-| Linux x64 | `cargo build --release --locked` | `target/release/noteschain` | 约 3.9 MB |
+| Linux x64 | `cargo build --release --locked` | `target/release/noteschain` | 约 3.9 MB（首次 Linux 构建后复核） |
 
 前端编辑器产物已随仓库提交，只有改过 `web/src/editor.js` 才需要重新打包：
 
@@ -83,16 +83,16 @@ http://127.0.0.1:8090/?token=<64位随机串>
 # 且即将打的 tag 必须等于 v<version>（CI 会校验，不一致直接失败）。
 # 例：version = "0.1.2" → git tag v0.1.2
 
-# 0) 一条命令跑完全部自动验证（构建 / 单测 / clippy / 冒烟 / 边界 / 平替预演 / 13 项浏览器交互）
+# 0) 一条命令跑完全部自动验证（构建 / 单测 / clippy / 冒烟 / 边界 / 平替预演 / 浏览器交互）
 pwsh -File tools\release-gate.ps1
 
-# 1) 单元测试（33 项）
+# 1) 单元测试
 cargo test
 
 # 2) 静态检查
 cargo clippy --all-targets
 
-# 3) 端到端冒烟（18 项，会在 .demo\smoke-notes 造语料）
+# 3) 端到端冒烟（会在 .demo\smoke-notes 造语料）
 pwsh -File tools\smoke.ps1
 
 # 2.4) 边界场景（怪文件名 / 大文件 / GBK / .gitignore / 空目录）

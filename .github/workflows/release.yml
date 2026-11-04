@@ -10,23 +10,22 @@ on:
         required: true
         type: string
 
-# 手动重跑时也按 tag 分组，避免不同 tag 的发布互相顶掉
+# 统一按 tag 名分组：tag push 时 github.ref 是 refs/tags/vX，dispatch 时是 vX，
+# 直接拼 github.ref 会让同一 tag 落在两个分组；改用 github.ref_name 归一成 vX。
 concurrency:
-  group: release-${{ inputs.tag || github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 单 job 负责「解析 tag / 校验版本 / 预建 Release」。
-  # 两个平台并行上传，不再各自判断要不要 create Release —— 那会竞争。
+  # 只做「解析 tag / 校验版本」，不在此创建 Release。
+  # Release 由末尾 publish 在两个平台都构建成功后才创建，避免构建失败留下残缺 Release。
   prepare:
-    name: 校验版本并准备 Release
+    name: 校验版本
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: write
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
@@ -35,9 +34,13 @@ jobs:
       - name: 解析 tag
         id: meta
         shell: bash
+        env:
+          # 经 env 传入，避免把 workflow_dispatch 输入 / ref 名直接插进 shell 造成注入
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          tag="${{ inputs.tag }}"
-          if [ -z "$tag" ]; then tag="${{ github.ref_name }}"; fi
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then tag="$REF_NAME"; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: 校验 tag 与 Cargo.toml / Cargo.lock 版本一致
@@ -57,25 +60,11 @@ jobs:
             exit 1
           fi
 
-      - name: 预建 Release（不存在时）
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在，跳过创建"
-          else
-            gh release create "$TAG" --verify-tag --title "NotesChain $TAG" --generate-notes
-          fi
-
   windows-x64:
-    name: 打包并发布 Windows x64
+    name: 打包 Windows x64
     needs: prepare
     runs-on: windows-latest
     timeout-minutes: 40
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -97,7 +86,6 @@ jobs:
           ./target/release/noteschain.exe --help | Out-Null
 
       - name: 打包
-        id: pack
         shell: pwsh
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -105,7 +93,7 @@ jobs:
           $tag = "$env:TAG"
           $name = "noteschain-$tag-windows-x64"
 
-          New-Item -ItemType Directory -Force dist | Out-Null
+          New-Item -ItemType Directory -Force dist, out | Out-Null
           Copy-Item target/release/noteschain.exe dist/
           Copy-Item README.md dist/
 
@@ -113,26 +101,21 @@ jobs:
           $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $name.zip" | Set-Content "$name.zip.sha256" -Encoding utf8
 
-          "zip=$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          # 收集待发布资产，交给 publish 统一上传
+          Copy-Item "$name.zip", "$name.zip.sha256", "target/release/noteschain.exe" out/
 
-      - name: 上传资产
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          $zip = "${{ steps.pack.outputs.zip }}"
-          $assets = @($zip, "$zip.sha256", "target/release/noteschain.exe")
-          gh release upload "$env:TAG" $assets --clobber
-          gh release view "$env:TAG" --json url --jq .url
+      - name: 暂存构建产物（不直接发 Release）
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: out/*
+          if-no-files-found: error
 
   linux-x64:
-    name: 打包并发布 Linux x64
+    name: 打包 Linux x64
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -154,25 +137,63 @@ jobs:
           ./target/release/noteschain --help >/dev/null
 
       - name: 打包
-        id: pack
         shell: bash
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           name="noteschain-$TAG-linux-x64"
-          mkdir -p "dist/$name"
+          mkdir -p "dist/$name" out
           cp target/release/noteschain "dist/$name/"
           cp README.md "dist/$name/"
           tar czf "$name.tar.gz" -C dist "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-          echo "tar=$name.tar.gz" >> "$GITHUB_OUTPUT"
 
-      - name: 上传资产
+          # 收集待发布资产，交给 publish 统一上传
+          cp "$name.tar.gz" "$name.tar.gz.sha256" target/release/noteschain out/
+
+      - name: 暂存构建产物（不直接发 Release）
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: out/*
+          if-no-files-found: error
+
+  # 两个平台都成功后，才创建/更新 Release 并上传全部资产；任一平台失败则本 job 不会执行。
+  publish:
+    name: 创建 Release 并发布资产
+    needs: [prepare, windows-x64, linux-x64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: 下载两端构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 列出待发布文件
+        run: find artifacts -type f | sort
+
+      - name: 创建或更新 Release 并上传资产
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.tag }}
-          TAR: ${{ steps.pack.outputs.tar }}
         run: |
-          gh release upload "$TAG" "$TAR" "$TAR.sha256" "target/release/noteschain" --clobber
+          set -euo pipefail
+          # 文件名均无空格（noteschain-…），按空白分词安全
+          files=$(find artifacts -type f | sort)
+          if [ -z "$files" ]; then
+            echo "::error::没有可上传的产物"
+            exit 1
+          fi
+          echo "将上传："
+          echo "$files"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，覆盖同名资产"
+            gh release upload "$TAG" $files --clobber
+          else
+            gh release create "$TAG" --verify-tag --title "NotesChain $TAG" --generate-notes $files
+          fi
           gh release view "$TAG" --json url --jq .url
