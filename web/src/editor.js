@@ -20,19 +20,21 @@ import { tags } from '@lezer/highlight';
 
 const READ_FONT = 'var(--font-read, "Songti SC", "SimSun", serif)';
 
+/* 标题/行内样式与 .doc 预览共用排版变量（无缝预览阶段 0）：
+   字号用 em 是相对值，会随用户字号设置（--fs-base）缩放；行高与预览一致。 */
 const highlight = HighlightStyle.define([
-  { tag: tags.heading1, fontSize: '1.8em', fontWeight: '600', fontFamily: READ_FONT },
-  { tag: tags.heading2, fontSize: '1.27em', fontWeight: '600', fontFamily: READ_FONT },
-  { tag: tags.heading3, fontSize: '1.07em', fontWeight: '600', fontFamily: READ_FONT },
-  { tag: tags.heading4, fontWeight: '600' },
-  { tag: tags.heading5, fontWeight: '600' },
-  { tag: tags.heading6, fontWeight: '600' },
+  { tag: tags.heading1, fontSize: 'var(--fs-h1)', fontWeight: '600', fontFamily: READ_FONT, lineHeight: 'var(--lh-heading)', letterSpacing: '.01em' },
+  { tag: tags.heading2, fontSize: 'var(--fs-h2)', fontWeight: '600', fontFamily: READ_FONT, lineHeight: 'var(--lh-heading)' },
+  { tag: tags.heading3, fontSize: 'var(--fs-h3)', fontWeight: '600', fontFamily: READ_FONT, lineHeight: 'var(--lh-heading)' },
+  { tag: tags.heading4, fontWeight: '600', lineHeight: 'var(--lh-heading-sm)' },
+  { tag: tags.heading5, fontWeight: '600', lineHeight: 'var(--lh-heading-sm)' },
+  { tag: tags.heading6, fontWeight: '600', lineHeight: 'var(--lh-heading-sm)' },
   { tag: tags.strong, fontWeight: '700' },
   { tag: tags.emphasis, fontStyle: 'italic' },
   { tag: tags.strikethrough, textDecoration: 'line-through' },
-  { tag: tags.link, color: 'var(--accent)', textDecoration: 'underline' },
+  { tag: tags.link, color: 'var(--accent)', textDecoration: 'underline', textUnderlineOffset: '3px' },
   { tag: tags.url, color: 'var(--muted)' },
-  { tag: tags.monospace, fontFamily: 'ui-monospace, Consolas, monospace', color: 'var(--chip-fg)' },
+  { tag: tags.monospace, fontFamily: 'ui-monospace, Consolas, monospace', color: 'var(--chip-fg)', fontSize: '.92em' },
   { tag: tags.quote, color: 'var(--muted)' },
   { tag: tags.list, color: 'var(--muted)' },
   { tag: tags.meta, color: 'var(--faint)' },
@@ -40,8 +42,9 @@ const highlight = HighlightStyle.define([
 ]);
 
 const theme = EditorView.theme({
-  '&': { color: 'var(--fg)', backgroundColor: 'transparent', fontSize: '15px' },
-  '.cm-content': { fontFamily: 'inherit', padding: '4px 0', lineHeight: '1.85', caretColor: 'var(--accent)' },
+  // 字号跟 --fs-base 走，与预览一样随用户字号设置缩放（此前写死 15px，改字号后两边会漂移）
+  '&': { color: 'var(--fg)', backgroundColor: 'transparent', fontSize: 'var(--fs-base)' },
+  '.cm-content': { fontFamily: 'inherit', padding: '4px 0', lineHeight: 'var(--lh-body)', caretColor: 'var(--accent)' },
   '.cm-scroller': { fontFamily: 'inherit', overflow: 'auto' },
   '.cm-line': { padding: '0 2px' },
   '&.cm-focused': { outline: 'none' },
