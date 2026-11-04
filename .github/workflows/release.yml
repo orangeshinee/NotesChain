@@ -35,9 +35,13 @@ jobs:
       - name: 解析 tag
         id: meta
         shell: bash
+        env:
+          # 经 env 传入，避免把 workflow_dispatch 输入 / ref 名直接插进 shell 造成注入
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          tag="${{ inputs.tag }}"
-          if [ -z "$tag" ]; then tag="${{ github.ref_name }}"; fi
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then tag="$REF_NAME"; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: 校验 tag 与 Cargo.toml / Cargo.lock 版本一致
