@@ -1,7 +1,7 @@
 # NotesChain 发布说明与操作手册
 
-适用版本：v0.1（对应 commit 见 `git log`）  
-更新日期：2026-11-01
+适用版本：v0.1.1（对应 commit 见 `git log`）  
+更新日期：2026-11-04
 
 ## 一、构建与分发
 
@@ -10,7 +10,7 @@
 | 平台 | 构建命令 | 产物 | 体积 |
 | --- | --- | --- | --- |
 | Windows x64 | `cargo build --release --locked` | `target\release\noteschain.exe` | 约 3.9 MB |
-| Linux x64 | `cargo build --release --locked` | `target/release/noteschain` | 约 3.9 MB |
+| Linux x64 | `cargo build --release --locked` | `target/release/noteschain` | 约 3.9 MB（首次 Linux 构建后复核） |
 
 前端编辑器产物已随仓库提交，只有改过 `web/src/editor.js` 才需要重新打包：
 
