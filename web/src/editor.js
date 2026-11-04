@@ -21,7 +21,8 @@ import { tags } from '@lezer/highlight';
 const READ_FONT = 'var(--font-read, "Songti SC", "SimSun", serif)';
 
 /* 标题/行内样式与 .doc 预览共用排版变量（无缝预览阶段 0）：
-   字号用 em 是相对值，会随用户字号设置（--fs-base）缩放；行高与预览一致。 */
+   --fs-h1/h2/h3 由 --fs-base 用 calc 派生，默认为 27/19/16px；
+   改字号设置时标题与正文等比缩放，编辑态与预览保持一致。 */
 const highlight = HighlightStyle.define([
   { tag: tags.heading1, fontSize: 'var(--fs-h1)', fontWeight: '600', fontFamily: READ_FONT, lineHeight: 'var(--lh-heading)', letterSpacing: '.01em' },
   { tag: tags.heading2, fontSize: 'var(--fs-h2)', fontWeight: '600', fontFamily: READ_FONT, lineHeight: 'var(--lh-heading)' },
@@ -34,7 +35,7 @@ const highlight = HighlightStyle.define([
   { tag: tags.strikethrough, textDecoration: 'line-through' },
   { tag: tags.link, color: 'var(--accent)', textDecoration: 'underline', textUnderlineOffset: '3px' },
   { tag: tags.url, color: 'var(--muted)' },
-  { tag: tags.monospace, fontFamily: 'ui-monospace, Consolas, monospace', color: 'var(--chip-fg)', fontSize: '.92em' },
+  { tag: tags.monospace, fontFamily: 'var(--font-mono)', color: 'var(--chip-fg)', fontSize: '.92em' },
   { tag: tags.quote, color: 'var(--muted)' },
   { tag: tags.list, color: 'var(--muted)' },
   { tag: tags.meta, color: 'var(--faint)' },

@@ -43,10 +43,12 @@
   --fs-base: 15px;
   --fs-lg: 17px;
 
-  /* 排版共用变量（无缝预览阶段 0）：编辑态与预览页共用同一套，改字号/行高只改这里 */
-  --fs-h1: 27px;
-  --fs-h2: 19px;
-  --fs-h3: 16px;
+  /* 排版共用变量（无缝预览阶段 0）：编辑态与预览页共用同一套，改字号/行高只改这里。
+     标题字号由 --fs-base 用 calc 派生（等比缩放），默认 15px 时等于 27 / 19 / 16px，
+     这样「设置 → 字号」对标题与正文同时生效，编辑态与预览也不会漂移。 */
+  --fs-h1: calc(var(--fs-base) * 1.8);
+  --fs-h2: calc(var(--fs-base) * 1.2667);
+  --fs-h3: calc(var(--fs-base) * 1.0667);
   --lh-body: 1.85;
   --lh-heading: 1.4;
   --lh-heading-sm: 1.5;
@@ -1063,20 +1065,22 @@ pre.patch {
 }
 
 /* ---------------- 编辑态向预览看齐（#15.4；无缝预览阶段 0：与 .doc 共用排版变量） ---------------- */
-/* 标题：与 .doc 的 margin/字号/行高对齐，上下留白直接用同一套 em 值
-   （预览 margin 与编辑 padding-top 取值一致，随 --fs-base 一起缩放）。
-   行内用 padding 模拟 margin（.cm-line 上用 margin 会干扰 CodeMirror 的行高测量，故只用 padding）。 */
+/* 标题：字号/行高与 .doc 共用同一套变量；上下留白按「标题字号」用 calc 计算，
+   与预览的 em margin 等值（预览的 em 是相对标题字号，而 .cm-line 的 em 相对正文 --fs-base，
+   直接用 em 会偏小，故改用 calc 显式引用对应标题字号）。
+   行内用 padding 模拟 margin（.cm-line 上用 margin 会干扰 CodeMirror 的行高测量，故只用 padding）。
+   已知近似：h1 底部为 14px + 分隔线，预览 h1 另有 0.55em 下外边距，编辑态未复现；正文段落/列表间距仍走 CodeMirror 行距。 */
 .editor-host .cm-line.cm-h1 { padding-bottom: 14px; border-bottom: 1px solid var(--line); line-height: var(--lh-heading); }
 .editor-host .cm-line.cm-h2 {
-  padding-top: 1.5em;
-  padding-bottom: .6em;
+  padding-top: calc(var(--fs-h2) * 1.5);
+  padding-bottom: calc(var(--fs-h2) * .6);
   line-height: var(--lh-heading);
   background: linear-gradient(var(--accent), var(--accent)) no-repeat 0 .7em / 22px 2px;
 }
-.editor-host .cm-line.cm-h3 { padding-top: 1.4em; padding-bottom: .5em; line-height: var(--lh-heading); }
+.editor-host .cm-line.cm-h3 { padding-top: calc(var(--fs-h3) * 1.4); padding-bottom: calc(var(--fs-h3) * .5); line-height: var(--lh-heading); }
 .editor-host .cm-line.cm-h4,
 .editor-host .cm-line.cm-h5,
-.editor-host .cm-line.cm-h6 { padding-top: 1.2em; padding-bottom: .4em; line-height: var(--lh-heading-sm); }
+.editor-host .cm-line.cm-h6 { padding-top: calc(var(--fs-base) * 1.2); padding-bottom: calc(var(--fs-base) * .4); line-height: var(--lh-heading-sm); }
 /* 已完成待办：删除线 + 变淡（预览里也是这样） */
 .editor-host .cm-line.cm-task-done { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
 /* 代码块：整段浅底（围栏行 + 内容行），与 .doc pre 同字号/行高/等宽字体 */
