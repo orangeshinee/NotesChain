@@ -10,9 +10,10 @@ on:
         required: true
         type: string
 
-# 手动重跑时也按 tag 分组，避免不同 tag 的发布互相顶掉
+# 统一按 tag 名分组：tag push 时 github.ref 是 refs/tags/vX，dispatch 时是 vX，
+# 直接拼 github.ref 会让同一 tag 落在两个分组；改用 github.ref_name 归一成 vX。
 concurrency:
-  group: release-${{ inputs.tag || github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
