@@ -18,7 +18,8 @@ http://127.0.0.1:8090
 - 之后所有请求（`fetch`、`<img>`、`<a download>`）靠浏览器自动携带 Cookie。
 - **所有 `/api/*` 与静态资源接口**（`/app.js`、`/style.css`、`/editor.js`）都校验 Cookie；缺失或错误返回 `401 unauthorized`。
 - 启动参数 `--no-token`：进程内 token 为空，**全部接口不鉴权**（仅建议个人独占机器使用）。
-- token 只存在进程内存，重启即失效。
+- token 存于进程内存，重启即失效；CLI 通过下面的 token 文件获取当前 token。
+- **CLI 鉴权**：除 Cookie 外，`/api/*` 也接受 `Authorization: Bearer <token>`（与 Cookie 是同一启动 token）。服务端启动时把当前 token 写进 token 文件（Windows `%LOCALAPPDATA%\NotesChain\token`、Linux/macOS `~/.config/noteschain/token`，0600 语义：Unix 直接设 `0o600`，Windows 用 `icacls` 去掉继承、仅授权当前用户，收紧失败只告警；内容含 token + 端口 + 启动时间），CLI 按 `NC_TOKEN` 环境变量 > token 文件 > `--no-token` 的优先级取 token；正常退出时删除 token 文件，崩溃残留靠下次启动覆盖。token 文件在笔记目录之外，不会被 Git 提交。
 
 ### 1.3 统一响应包络与错误码
 
@@ -68,6 +69,7 @@ http://127.0.0.1:8090
 | GET | `/api/todos` | 全局待办汇总 |
 | PATCH | `/api/todos` | 勾选 / 取消勾选（行级回写） |
 | POST | `/api/todos/append` | 快速新增待办 |
+| POST | `/api/notes/append` | 往今日笔记（或指定文件）尾部追加一行自由文本（CLI 速记） |
 | GET | `/api/tags` | 标签树 |
 | GET | `/api/search` | 全文搜索 |
 | POST | `/api/notes/new` | 新建笔记（模板 / 日记） |
@@ -207,6 +209,22 @@ Query：`tag`（含子标签）、`status`（`open` | `done` | `all`，默认 `o
 ```
 
 成功：`{ "path": "...", "line": 18, "version": "..." }`
+
+### POST /api/notes/append
+
+往今日笔记（或 `target` 指定文件）尾部追加一行自由文本（CLI 速记接口）。不存在的目标文件：默认今日日记按日记模板新建，其余新建空文件再追加。
+
+请求体：
+
+```json
+{ "text": "一句话速记", "target": "可选，相对笔记根的 .md 路径，默认今天的日记" }
+```
+
+- `text` 单行、非空；含换行返回 `400 bad_request`。
+- 追加保留原文件行尾风格（CRLF 文件用 `\r\n`）；文件尾无换行时先补一个。
+- 写顺序与其它写接口一致：`resolve()` → 按文件锁 → 原子写 → 更新索引 → `git.notify()` → `revision+1`。
+
+成功：`{ "path": "...", "line": 18, "version": "..." }`（`line` 为追加行的行号）
 
 ---
 
