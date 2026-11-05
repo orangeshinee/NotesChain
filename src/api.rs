@@ -58,6 +58,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/files/*path", get(read_file).put(save_file).delete(delete_file))
         .route("/api/todos", get(list_todos).patch(patch_todo))
         .route("/api/todos/append", post(append_todo))
+        .route("/api/notes/append", post(append_note))
         .route("/api/notes/new", post(create_note))
         .route("/api/templates", get(list_templates))
         .route("/api/schedule/append", post(append_schedule))
@@ -162,20 +163,30 @@ fn cookie_token(headers: &HeaderMap) -> Option<String> {
         .map(|v| v.to_string())
 }
 
+/// CLI 鉴权：`Authorization: Bearer <token>`（设计文档 §5，token 与 Cookie 是同一启动 token）
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    raw.strip_prefix("Bearer ")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 async fn auth(State(st): State<Arc<AppState>>, req: Request, next: Next) -> Response {
     // --no-token：进程启动时 token 为空串，直接放行（仅建议个人独占机器）
     if st.token.is_empty() {
         return next.run(req).await;
     }
-    match cookie_token(req.headers()) {
-        Some(token) if token == st.token => next.run(req).await,
-        _ => ApiError::new(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "token 缺失或已失效，请重新打开启动地址",
-        )
-        .into_response(),
+    let ok = cookie_token(req.headers()).as_deref() == Some(st.token.as_str())
+        || bearer_token(req.headers()).as_deref() == Some(st.token.as_str());
+    if ok {
+        return next.run(req).await;
     }
+    ApiError::new(
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        "token 缺失或已失效，请重新打开启动地址",
+    )
+    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -930,6 +941,83 @@ async fn append_schedule(
         "version": crate::index::version_of_text(mtime_ms(&abs), &updated),
     })))
 }
+
+// ---------------------------------------------------------------- 速记追加（CLI 用）
+
+#[derive(Deserialize)]
+struct AppendNoteRequest {
+    text: String,
+    /// 目标文件（相对笔记根）；不传则为今日日记
+    #[serde(default)]
+    target: Option<String>,
+}
+
+/// POST /api/notes/append：往今日笔记（或指定文件）尾部追加一行自由文本。
+/// 与 append_todo / append_schedule 同一套写顺序：resolve → 按文件锁 → 原子写 →
+/// 更新索引 → git.notify → revision+1。CLI 禁止用“读整文件 + 本地拼接 + PUT”模拟追加。
+async fn append_note(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<AppendNoteRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let text = body.text.trim();
+    if text.is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "内容为空"));
+    }
+    if text.contains('\n') {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "一次只能添加一行"));
+    }
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let default_rel = format!("{}/{}/{}.md", &today[..4], &today[5..7], today);
+    let rel = body.target.clone().unwrap_or_else(|| default_rel.clone());
+    ensure_markdown(&rel, "追加")?;
+    let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
+    let lock_key = st.relative(&abs);
+    let lock = st.lock_for(&lock_key).await;
+    let _guard = lock.lock().await;
+
+    let exists = abs.is_file();
+    let content = if exists {
+        std::fs::read_to_string(&abs).map_err(ApiError::internal)?
+    } else if rel == default_rel {
+        // 今日日记不存在：与 append_todo 一致，按日记模板新建
+        render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
+    } else {
+        String::new()
+    };
+
+    // 文件尾追加一行：保留原文件行尾风格（CRLF 文件用 \r\n），末尾无换行时先补一个。
+    let eol = if content.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut updated = content;
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push_str(eol);
+    }
+    updated.push_str(text);
+    updated.push_str(eol);
+    let line_no = updated.lines().count();
+
+    if !exists {
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
+        }
+    }
+    todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
+    st.index
+        .write()
+        .await
+        .upsert(&st.notes_root, &rel)
+        .map_err(ApiError::internal)?;
+    st.git.notify();
+    st.revision
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    Ok(Json(json!({
+        "path": rel,
+        "line": line_no,
+        "version": crate::index::version_of_text(mtime_ms(&abs), &updated),
+    })))
+}
+
 // ---------------------------------------------------------------- 每日文件 / 索引 / git
 
 async fn ensure_daily(State(st): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
