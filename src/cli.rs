@@ -219,7 +219,12 @@ impl Client {
             "GET" => self.agent.get(&url),
             "POST" => self.agent.post(&url),
             "PATCH" => self.agent.patch(&url),
-            _ => unreachable!(),
+            other => {
+                return Err(CliFail::new(
+                    EXIT_OTHER,
+                    format!("内部错误：未支持的 HTTP 方法 {other}"),
+                ))
+            }
         };
         for (k, v) in query {
             req = req.query(k, v);
@@ -257,8 +262,7 @@ impl Client {
 
     fn get_json(&self, path: &str, query: &[(&str, &str)]) -> Result<Value, CliFail> {
         let raw = self.request("GET", path, query, None)?;
-        serde_json::from_str(&raw)
-            .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))
+        parse_json(&raw)
     }
 
     fn get_raw(&self, path: &str, query: &[(&str, &str)]) -> Result<String, CliFail> {
@@ -293,6 +297,22 @@ impl Client {
 fn error_message(raw: &str) -> Option<String> {
     let v: Value = serde_json::from_str(raw).ok()?;
     v.get("error")?.get("message")?.as_str().map(|s| s.to_string())
+}
+
+/// 把服务端返回体解析为 JSON；失败统一映射为「其他错误」。
+fn parse_json(raw: &str) -> Result<Value, CliFail> {
+    serde_json::from_str(raw)
+        .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))
+}
+
+/// json 模式下原样打印服务端返回体；返回 true 表示已输出（调用方应提前返回）。
+fn print_raw_if_json(client: &Client, raw: &str) -> bool {
+    if client.json {
+        println!("{raw}");
+        true
+    } else {
+        false
+    }
 }
 
 // ---------------------------------------------------------------- 待办列表与编号
@@ -342,11 +362,9 @@ fn format_todo(n: usize, item: &Value) -> String {
 fn cmd_today(client: &Client) -> Result<(), CliFail> {
     let schedule_raw = client.get_raw("/api/schedule", &[("range", "today")])?;
     let todos_raw = client.get_raw("/api/todos", &[])?;
+    let schedule: Value = parse_json(&schedule_raw)?;
+    let todos: Value = parse_json(&todos_raw)?;
     if client.json {
-        let schedule: Value = serde_json::from_str(&schedule_raw)
-            .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))?;
-        let todos: Value = serde_json::from_str(&todos_raw)
-            .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))?;
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({ "schedule": schedule, "todos": todos }))
@@ -354,10 +372,6 @@ fn cmd_today(client: &Client) -> Result<(), CliFail> {
         );
         return Ok(());
     }
-    let schedule: Value = serde_json::from_str(&schedule_raw)
-        .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))?;
-    let todos: Value = serde_json::from_str(&todos_raw)
-        .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))?;
     let mut out = String::new();
     out.push_str(&format_schedule_human(&schedule));
     let items = todos["items"].as_array().cloned().unwrap_or_default();
@@ -381,12 +395,10 @@ fn cmd_todo_add(client: &Client, text: &str) -> Result<(), CliFail> {
         &[],
         Some(&serde_json::json!({ "text": text })),
     )?;
-    if client.json {
-        println!("{raw}");
+    if print_raw_if_json(client, &raw) {
         return Ok(());
     }
-    let v: Value = serde_json::from_str(&raw)
-        .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))?;
+    let v: Value = parse_json(&raw)?;
     println!(
         "已追加到 {}:{}",
         v["path"].as_str().unwrap_or(""),
@@ -458,8 +470,7 @@ fn cmd_todo_done(client: &Client, number: usize) -> Result<(), CliFail> {
             "done": true,
         })),
     )?;
-    if client.json {
-        println!("{raw}");
+    if print_raw_if_json(client, &raw) {
         return Ok(());
     }
     println!(
@@ -471,12 +482,10 @@ fn cmd_todo_done(client: &Client, number: usize) -> Result<(), CliFail> {
 
 fn cmd_search(client: &Client, query: &str) -> Result<(), CliFail> {
     let raw = client.get_raw("/api/search", &[("q", query)])?;
-    if client.json {
-        println!("{raw}");
+    if print_raw_if_json(client, &raw) {
         return Ok(());
     }
-    let v: Value = serde_json::from_str(&raw)
-        .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))?;
+    let v: Value = parse_json(&raw)?;
     let items = v["items"].as_array().cloned().unwrap_or_default();
     if items.is_empty() {
         println!("（无匹配结果）");
@@ -542,12 +551,10 @@ fn format_schedule_human(schedule: &Value) -> String {
 
 fn cmd_schedule(client: &Client, range: &str) -> Result<(), CliFail> {
     let raw = client.get_raw("/api/schedule", &[("range", range)])?;
-    if client.json {
-        println!("{raw}");
+    if print_raw_if_json(client, &raw) {
         return Ok(());
     }
-    let v: Value = serde_json::from_str(&raw)
-        .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))?;
+    let v: Value = parse_json(&raw)?;
     print!("{}", format_schedule_human(&v));
     Ok(())
 }
@@ -559,12 +566,10 @@ fn cmd_note_add(client: &Client, text: &str) -> Result<(), CliFail> {
         &[],
         Some(&serde_json::json!({ "text": text })),
     )?;
-    if client.json {
-        println!("{raw}");
+    if print_raw_if_json(client, &raw) {
         return Ok(());
     }
-    let v: Value = serde_json::from_str(&raw)
-        .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))?;
+    let v: Value = parse_json(&raw)?;
     println!(
         "已追加到 {}:{}",
         v["path"].as_str().unwrap_or(""),
@@ -575,12 +580,10 @@ fn cmd_note_add(client: &Client, text: &str) -> Result<(), CliFail> {
 
 fn cmd_git_status(client: &Client) -> Result<(), CliFail> {
     let raw = client.get_raw("/api/git/status", &[])?;
-    if client.json {
-        println!("{raw}");
+    if print_raw_if_json(client, &raw) {
         return Ok(());
     }
-    let v: Value = serde_json::from_str(&raw)
-        .map_err(|e| CliFail::new(EXIT_OTHER, format!("服务端响应不是合法 JSON：{e}")))?;
+    let v: Value = parse_json(&raw)?;
     let available = v["available"].as_bool().unwrap_or(false);
     if !available {
         println!("Git：不可用");

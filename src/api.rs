@@ -171,14 +171,30 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// 恒定时间比较 token：避免 `==` 按字符提前返回泄露匹配前缀的时序。
+/// 本地回环 + 64 位随机 token 下风险极低，但成本也极低，统一走这里。
+fn token_eq(provided: Option<&str>, expected: &str) -> bool {
+    let Some(p) = provided else { return false };
+    let (a, b) = (p.as_bytes(), expected.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 async fn auth(State(st): State<Arc<AppState>>, req: Request, next: Next) -> Response {
     // --no-token：进程启动时 token 为空串，直接放行（仅建议个人独占机器）
     if st.token.is_empty() {
         return next.run(req).await;
     }
-    let ok = cookie_token(req.headers()).as_deref() == Some(st.token.as_str())
-        || bearer_token(req.headers()).as_deref() == Some(st.token.as_str());
-    if ok {
+    let cookie_ok = token_eq(cookie_token(req.headers()).as_deref(), &st.token);
+    let bearer_ok = token_eq(bearer_token(req.headers()).as_deref(), &st.token);
+    // 用 `|` 而非 `||`：两边都求值，避免短路泄漏「哪种凭证命中」
+    if cookie_ok | bearer_ok {
         return next.run(req).await;
     }
     ApiError::new(
@@ -199,13 +215,13 @@ async fn root(State(st): State<Arc<AppState>>, Query(q): Query<RootQuery>, heade
     if st.token.is_empty() {
         return Html(INDEX_HTML).into_response();
     }
-    let has_valid_cookie = cookie_token(&headers).as_deref() == Some(st.token.as_str());
+    let has_valid_cookie = token_eq(cookie_token(&headers).as_deref(), &st.token);
     if let Some(token) = q.token {
         // 已带有效 Cookie 时，再来 ?token= 一律拒绝重复引导（PRD 9.1），直接回干净地址
         if has_valid_cookie {
             return Redirect::temporary("/").into_response();
         }
-        if token == st.token {
+        if token_eq(Some(token.as_str()), &st.token) {
             let mut resp = Redirect::temporary("/").into_response();
             let value = format!("nc_token={}; Path=/; HttpOnly; SameSite=Strict", st.token);
             if let Ok(value) = HeaderValue::from_str(&value) {
@@ -215,7 +231,7 @@ async fn root(State(st): State<Arc<AppState>>, Query(q): Query<RootQuery>, heade
         }
         return unauthorized_page();
     }
-    if cookie_token(&headers).as_deref() == Some(st.token.as_str()) {
+    if token_eq(cookie_token(&headers).as_deref(), &st.token) {
         return Html(INDEX_HTML).into_response();
     }
     unauthorized_page()
