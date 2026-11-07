@@ -180,6 +180,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          # 本 job 不 checkout 仓库，gh 无法从 .git 推断仓库；显式给出，否则报 “not a git repository”
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # 文件名均无空格（noteschain-…），按空白分词安全
