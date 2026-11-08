@@ -28,6 +28,19 @@
   --warn-fg: #8a4b26;
   --warn-icon: #a04a26;
   --danger: #a33a2b;
+  --prio-p2: #8a6a00;
+
+  /* 主操作 / 状态 / 阴影遮罩：本轮新增，组件内不再写字面量颜色 */
+  --action-bg: var(--accent);
+  --action-fg: var(--bg);
+  --action-bg-hover: color-mix(in srgb, var(--accent) 88%, var(--fg));
+  --state-loading: var(--muted);
+  --shadow-popover: rgb(40, 32, 18);
+  --mask-scrim: rgb(30, 24, 16);
+
+  --dur-fast: 160ms;
+  --dur-state: 200ms;
+  --ease-out: cubic-bezier(.25, 1, .5, 1);
 
   --radius-sm: 4px;
   --radius: 6px;
@@ -80,6 +93,9 @@
     --warn-fg: #e6b28a;
     --warn-icon: #c2683f;
     --danger: #ff9b8e;
+    --prio-p2: #d9b45f;
+    --shadow-popover: rgb(0, 0, 0);
+    --mask-scrim: rgb(0, 0, 0);
   }
 }
 
@@ -104,6 +120,9 @@
   --warn-fg: #e6b28a;
   --warn-icon: #c2683f;
   --danger: #ff9b8e;
+  --prio-p2: #d9b45f;
+  --shadow-popover: rgb(0, 0, 0);
+  --mask-scrim: rgb(0, 0, 0);
 }
 
 /* ---------------- 基础 ---------------- */
@@ -228,7 +247,7 @@ a { color: var(--accent); }
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 12px 28px rgba(40, 32, 18, .14);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--shadow-popover) 14%, transparent);
 }
 .more-menu[hidden] { display: none; }
 .more-menu .quick {
@@ -310,7 +329,7 @@ a { color: var(--accent); }
   flex: none;
   font-size: 9px;
   color: var(--faint);
-  transition: transform .12s ease;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .tree details[open] > summary::before { transform: rotate(90deg); }
 .tree details > summary:hover,
@@ -372,7 +391,7 @@ a { color: var(--accent); }
   flex: none;
   font-size: 10px;
   color: var(--faint);
-  transition: transform .12s ease;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .tag-node .caret.open { transform: rotate(90deg); }
 .tag-node .tag-name {
@@ -395,7 +414,7 @@ a { color: var(--accent); }
   font-size: 10.5px;
   color: var(--accent);
   opacity: .55;
-  transition: opacity .12s ease;
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 .tag-node:hover .tag-open,
 .tag-node:focus-within .tag-open { opacity: 1; }
@@ -814,7 +833,7 @@ body.wide .file-layout .wrap { max-width: none; flex: 1 1 auto; }
   flex: none;
   font-size: 10px;
   color: var(--faint);
-  transition: transform .12s ease;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .day.collapsed .day-caret { transform: rotate(-90deg); }
 
@@ -942,11 +961,8 @@ table.todos th { position: relative; }
 }
 .prio.p0 { color: var(--danger); }
 .prio.p1 { color: var(--warn-fg); }
-.prio.p2 { color: #8a6a00; }
+.prio.p2 { color: var(--prio-p2); }
 .prio.p3 { color: var(--accent); }
-@media (prefers-color-scheme: dark) {
-  .prio.p2 { color: #d9b45f; }
-}
 
 .todo-filter {
   padding: 4px 8px;
@@ -1154,7 +1170,7 @@ pre.patch {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 12px 30px rgba(40, 32, 18, .16);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--shadow-popover) 16%, transparent);
 }
 .cm-hover-card { max-width: 420px; padding: 10px 12px; color: var(--fg); font-size: var(--fs-sm); }
 .hover-title {
@@ -1198,7 +1214,7 @@ pre.patch {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(30, 24, 16, .38);
+  background: color-mix(in srgb, var(--mask-scrim) 38%, transparent);
 }
 .modal {
   min-width: 340px;
@@ -1206,7 +1222,7 @@ pre.patch {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  box-shadow: 0 24px 60px rgba(40, 32, 18, .22);
+  box-shadow: 0 24px 60px color-mix(in srgb, var(--shadow-popover) 22%, transparent);
 }
 .modal h2 { margin: 0 0 14px; font-family: var(--font-read); font-size: var(--fs-lg); font-weight: 600; }
 .new-note-modal { min-width: 400px; }
@@ -1258,7 +1274,7 @@ pre.patch {
   background: var(--bg);
   color: var(--fg);
   font-size: 17px;
-  box-shadow: 0 6px 20px rgba(40, 32, 18, .16);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow-popover) 16%, transparent);
   cursor: pointer;
 }
 .backdrop {
@@ -1266,7 +1282,7 @@ pre.patch {
   position: fixed;
   inset: 0;
   z-index: 20;
-  background: rgba(30, 24, 16, .35);
+  background: color-mix(in srgb, var(--mask-scrim) 35%, transparent);
 }
 @media (max-width: 860px) {
   .sidebar-toggle { display: block; }
@@ -1277,8 +1293,8 @@ pre.patch {
     bottom: 0;
     z-index: 25;
     transform: translateX(-100%);
-    transition: transform .2s ease;
-    box-shadow: 0 0 40px rgba(40, 32, 18, .25);
+    transition: transform var(--dur-fast) var(--ease-out);
+    box-shadow: 0 0 40px color-mix(in srgb, var(--shadow-popover) 25%, transparent);
   }
   .sidebar.open { transform: translateX(0); }
   .backdrop.show { display: block; }
@@ -1308,6 +1324,98 @@ pre.patch {
   body { background: #fff; color: #000; }
 }
 @page { margin: 16mm; }
+
+/* ---------------- v1.3：主动作 / 常驻提示 / 三态 / 状态动效 ---------------- */
+
+/* PRD 6.1：无备份提示常驻可见，不截断、不依赖 hover */
+.git-notice {
+  padding: 0 16px 8px;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+  white-space: normal;
+}
+
+/* 主动作：每个 section 至多一个，不与 .seg 的筛选/切换同形 */
+.action {
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--action-bg);
+  color: var(--action-fg);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.6;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.action:hover { background: var(--action-bg-hover); opacity: .9; }
+.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* D1 = A：日程表单默认折叠，点「添加日程」展开。display 不可过渡，用一次性淡入 */
+.schedule-add { display: none; }
+.schedule-add.is-open {
+  display: flex;
+  animation: state-fade-in var(--dur-fast) var(--ease-out);
+}
+@keyframes state-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* D2 = A：待办筛选保持可见且靠右，只做视觉降权，不隐藏 */
+.todo-controls select.todo-filter {
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+}
+.todo-controls select.todo-filter:focus { border-bottom-color: var(--accent); }
+
+/* 保存状态槽位固定，避免文案长短让顶栏左右跳动 */
+.status { min-width: 132px; text-align: right; }
+
+/* 勾选待办：退出动效只碰 opacity / transform */
+table.todos tbody tr.removing {
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity var(--dur-state) var(--ease-out), transform var(--dur-state) var(--ease-out);
+  pointer-events: none;
+}
+
+/* 空 / 加载 / 错误三态分离，不再共用 .empty-state */
+.state { padding: 40px 8px; text-align: center; font-size: var(--fs-md); }
+.state h1 {
+  margin: 0 0 8px;
+  font-family: var(--font-read);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--fg);
+}
+.state--loading { color: var(--state-loading); }
+.state--loading::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--state-loading);
+  opacity: .55;
+  vertical-align: middle;
+}
+.state--error { color: var(--warn-fg); }
+.state--error .notice { margin: 12px auto 0; max-width: 420px; text-align: left; }
+.state--empty { color: var(--muted); }
+.state .state-action {
+  margin-top: 12px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.state .state-hint { margin-top: 8px; color: var(--faint); font-size: var(--fs-sm); }
 
 /* ---------------- 动效克制 ---------------- */
 @media (prefers-reduced-motion: reduce) {

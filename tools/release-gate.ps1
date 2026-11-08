@@ -93,7 +93,7 @@ if (-not $SkipBrowser) {
     if (-not $token) { throw "服务未就绪" }
     $hash = "#/file/" + [uri]::EscapeDataString($relPosix)
     # 逐个场景跑（而不是 all）：一次长会话里跑全部时 Edge 偶发崩溃，逐场景更稳也更易定位
-    $scenarios = @('hover','todo','autosave','conflict','search','tag','preview','virtual','clicks','quickadd','schedjump','export','settings','schedadd','resize','tagtoggle','scrollkeep')
+    $scenarios = @('hover','todo','autosave','conflict','search','tag','preview','virtual','clicks','quickadd','schedjump','export','settings','schedadd','resize','tagtoggle','scrollkeep','gitnotice')
     $probeText = ''
     $probeCode = 0
     foreach ($sc in $scenarios) {
@@ -113,10 +113,14 @@ if (-not $SkipBrowser) {
       $name = $c.Groups[1].Value
       $ok = $value -ne '' -and $value -notmatch 'no-|JS-ERROR' -and $value -notmatch '"added":false' -and $value -notmatch '"printed":0'
       if ($name -eq 'preview') {
-        $ok = $ok -and $value -match '"defaultPreview":true' -and $value -match '"editorVisible":true' -and $value -match '"previewAgain":true' -and $value -match '"headings":[1-9]' -and $value -match '"todoBoxes":[1-9]' -and $value -match '"todoIsInput":true'
+        # PR #3 后默认是实时预览编辑态：断言「默认编辑 -> 只读预览 -> 编辑 -> 再预览」四段往返
+        $ok = $ok -and $value -match '"defaultEditing":true' -and $value -match '"readonlyPreview":true' -and $value -match '"editorVisible":true' -and $value -match '"previewAgain":true' -and $value -match '"headings":[1-9]' -and $value -match '"todoBoxes":[1-9]' -and $value -match '"todoIsInput":true'
       }
       if ($name -eq 'autosave') {
         $ok = $ok -and $value -match '"marker":true'
+      }
+      if ($name -eq 'gitnotice') {
+        $ok = $ok -and $value -match '"gitNotice":true'
       }
       if ($name -eq 'clicks') {
         $ok = $ok -and $value -match '"wikiFound":true' -and $value -match '"afterWiki":"#/file/'
