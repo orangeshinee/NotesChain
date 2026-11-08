@@ -64,7 +64,8 @@ if (-not $line) {
 }
 $json = $line.Trim().Trim('"').Replace('\"', '"') | ConvertFrom-Json
 
-$ok = $json.status -like '已保存*' -and $json.match -eq $true -and $json.grew -eq 8
+# 状态文案可能带非颜色状态前缀（○ / … / ✓ / !），按「含已保存」判断而非起始匹配
+$ok = $json.status -like '*已保存*' -and $json.match -eq $true -and $json.grew -eq 8
 if ($ok) {
   Write-Host "PASS 保存中继续输入：status=$($json.status) 磁盘一致=$($json.match) 新增=$($json.grew)"
   exit 0

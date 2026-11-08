@@ -336,15 +336,19 @@ function docHead(titleText, rightText, pathText) {
 }
 
 function loadingState(text) {
-  const wrap = el('div', 'empty-state');
-  wrap.append(el('div', '', text || '加载中…'));
+  const wrap = el('div', 'state state--loading');
+  wrap.append(el('span', '', text || '加载中…'));
   return wrap;
 }
 
 function errorState(err) {
-  const wrap = el('div', 'empty-state');
+  const wrap = el('div', 'state state--error');
   wrap.append(el('h1', '', '出错了'));
   wrap.append(el('div', 'notice', String(err.message || err)));
+  const retry = el('button', 'state-action', '重试');
+  retry.type = 'button';
+  retry.addEventListener('click', () => route());
+  wrap.append(retry);
   return wrap;
 }
 
@@ -465,6 +469,11 @@ function buildSchedule(data) {
   }
   head.append(toggle);
 
+  // D1 = A：日程表单默认折叠，主操作「添加日程」常驻 head 右侧
+  const addToggle = el('button', 'action', '添加日程');
+  addToggle.type = 'button';
+  head.append(addToggle);
+
   // 结构化新增日程（#15.3）：选开始/结束时间 + 标题 + 可选地点/标签，写入今天
   const addRow = el('div', 'quick-add-row schedule-add');
   const startInput = document.createElement('input');
@@ -481,7 +490,7 @@ function buildSchedule(data) {
   titleInput.placeholder = '日程标题';
   const metaInput = el('input', 'quick-add meta');
   metaInput.placeholder = '@地点 #标签（可选）';
-  const addBtn = el('button', 'seg active', '添加');
+  const addBtn = el('button', 'action', '添加');
   addBtn.type = 'button';
   addRow.append(startInput, endInput, titleInput, metaInput, addBtn);
 
@@ -522,11 +531,25 @@ function buildSchedule(data) {
     }
   });
 
+  // 折叠切换：展开时 head 的按钮降级为「收起」（.seg），保证同屏只有一个 .action
+  const setAddOpen = (open) => {
+    addRow.classList.toggle('is-open', open);
+    addToggle.textContent = open ? '收起' : '添加日程';
+    addToggle.className = open ? 'seg' : 'action';
+    if (open) startInput.focus();
+  };
+  addToggle.addEventListener('click', () => setAddOpen(!addRow.classList.contains('is-open')));
+  addRow.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { setAddOpen(false); addToggle.focus(); }
+  });
+
   section.append(head, addRow);
 
   const days = (data && data.days) || [];
   if (!days.length) {
-    section.append(el('div', 'empty-state', '这一段时间里没有日记文件。'));
+    const empty = el('div', 'state state--empty', '这一段时间里没有日记文件。');
+    empty.append(el('div', 'state-hint', '日程写法：09:30-10:00 晨会 @线上 #工作'));
+    section.append(empty);
     return section;
   }
 
@@ -850,6 +873,7 @@ function buildTodoTable(items) {
   if (!items.length) {
     const tr = el('tr');
     const td = el('td', '', '没有未完成的待办，清静。');
+    td.append(el('div', 'state-hint', '待办写法：- [ ] 事项 #标签（上方输入框可直接添加）'));
     td.colSpan = 4;
     tr.append(td);
     body.append(tr);
@@ -927,6 +951,28 @@ function buildTodoTable(items) {
   return table;
 }
 
+// 勾选后先淡出再移除，避免「点了没反应」；只碰 opacity / transform
+function removeTodoRow(tr) {
+  tr.dataset.removing = '1';
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    tr.remove();
+    return;
+  }
+  let settled = false;
+  const once = () => {
+    if (settled) return;
+    settled = true;
+    if (tr.isConnected) tr.remove();
+  };
+  tr.addEventListener('transitionend', (event) => {
+    if (event.target === tr && event.propertyName === 'opacity') once();
+  });
+  // 超时兜底：once 自带 settled 守卫，触发后不会重复移除；不必在任意 transitionend 里清 timer
+  window.setTimeout(once, 250); // --dur-state 200ms + 50ms 兜底
+  tr.classList.remove('busy');
+  requestAnimationFrame(() => tr.classList.add('removing'));
+}
+
 async function toggleTodo(tr, box) {
   const payload = {
     path: tr.dataset.path,
@@ -943,8 +989,8 @@ async function toggleTodo(tr, box) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    tr.remove();
-    const left = document.querySelectorAll('table.todos tr[data-path]').length;
+    removeTodoRow(tr);
+    const left = document.querySelectorAll('table.todos tr[data-path]:not([data-removing])').length;
     const head = main.querySelector('.doc-head .right');
     if (head) head.textContent = `未完成 ${left} 条`;
   } catch (err) {
@@ -952,7 +998,9 @@ async function toggleTodo(tr, box) {
     tr.classList.add('failed');
     box.disabled = false;
     box.checked = !box.checked;
-    tr.querySelector('td:nth-child(3)').append(el('div', 'notice', String(err.message || err)));
+    tr.querySelector('td:nth-child(3)').append(
+      el('div', 'notice', String(err.message || err) + ' — 可重试或刷新页面')
+    );
   }
 }
 
@@ -986,7 +1034,7 @@ async function showFile(path, line) {
 
   const name = path.split('/').pop();
   const head = docHead(name, '', path);
-  const status = el('span', 'status saved', '已保存');
+  const status = el('span', 'status saved', '✓ 已保存');
   head.append(status);
   const wrap = el('div', 'wrap');
   const host = el('div', 'editor-host');
@@ -1145,7 +1193,7 @@ async function showFile(path, line) {
           } catch (e) {
             /* 读不到就按真冲突处理 */
           }
-          setStatus(status, 'conflict', '有冲突');
+          setStatus(status, 'conflict', '有冲突：重新加载或强制覆盖');
           showConflict(wrap, {
             onReload: async () => {
               try {
@@ -1155,14 +1203,14 @@ async function showFile(path, line) {
                 currentEditor.setValue(fresh.content);
                 setSaved(fresh.content);
               } catch (e) {
-                setStatus(status, 'conflict', '重新加载失败');
+                setStatus(status, 'conflict', '重新加载失败：可强制覆盖或重试');
               }
             },
             onOverwrite: () => flush(true),
           });
           return false;
         }
-        setStatus(status, 'conflict', '保存失败');
+        setStatus(status, 'conflict', '保存失败：重试或检查文件权限');
         showConflict(wrap, { message: String(err.message || err) });
         return false;
       }
@@ -1455,7 +1503,9 @@ function teardownEditor() {
 
 function setStatus(node, cls, text) {
   node.className = 'status ' + cls;
-  node.textContent = text;
+  // 非颜色线索：色弱用户也能靠前缀区分四态
+  const marks = { dirty: '○ ', saving: '… ', saved: '✓ ', conflict: '! ' };
+  node.textContent = (marks[cls] || '') + text;
 }
 
 function timeNow() {
@@ -1672,7 +1722,15 @@ function renderFileTree(data) {
     fileTree.append(box);
   }
 
-  if (!total) fileTree.append(el('div', 'empty-state', '还没有 Markdown 文件。'));
+  if (!total) {
+    const empty = el('div', 'state state--empty', '还没有 Markdown 文件。');
+    const create = el('button', 'state-action', '新建今天的日记');
+    create.type = 'button';
+    create.addEventListener('click', () => document.getElementById('today-link')?.click());
+    empty.append(create);
+    empty.append(el('div', 'state-hint', '目录：YYYY/MM/YYYY-MM-DD.md · 标签：#一级/二级'));
+    fileTree.append(empty);
+  }
   document.getElementById('file-count').textContent = String(total);
 }
 
@@ -1794,22 +1852,33 @@ function markActive() {
 
 function setGit(git) {
   const box = document.getElementById('git');
+  const notice = document.getElementById('git-notice');
   if (!git) {
-    box.textContent = '';
+    // 接口失败时不留一块空白，明确告知状态未知；提示同样隐藏，避免误导
+    box.textContent = 'Git 状态读取失败';
+    if (notice) notice.hidden = true;
     return;
   }
-  if (!git.available) {
-    box.textContent = git.disabled_by_user ? '版本历史已关闭' : '未检测到 git';
+  // available 只表示装了 git；is_repo=false（自动 init 失败）时同样没有版本历史。
+  // 用 === false 判定，避免旧版后端 / 降级响应缺字段时被误判成「无仓库」。
+  if (!git.available || git.is_repo === false) {
+    box.textContent = git.disabled_by_user
+      ? '版本历史已关闭'
+      : (git.available ? '版本历史初始化失败' : '未检测到 git');
+    // 没有版本历史时不该宣称「仅本地版本历史」，隐藏无备份提示（避免误导）
+    if (notice) notice.hidden = true;
     return;
   }
+  // 版本历史可用：常驻显示无远程备份提示（PRD 6.1）
+  if (notice) notice.hidden = false;
   const parts = [];
   if (git.disabled) parts.push('自动提交已停止');
   parts.push(git.last_commit ? '上次提交 ' + git.last_commit.slice(0, 16).replace('T', ' ') : '尚无提交');
   if (git.pending_files) parts.push('待提交 ' + git.pending_files);
   box.textContent = parts.join(' · ');
+  // 无备份提示由 #git-notice 常驻显示（PRD 6.1），tooltip 只放次要详情
   const tips = [];
   if (git.repo_root) tips.push('仓库根：' + git.repo_root);
-  tips.push('仅本地版本历史，无远程备份');
   if (git.last_error) tips.push('最近错误：' + git.last_error);
   box.title = tips.join('\n');
 }

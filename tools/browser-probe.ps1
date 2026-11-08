@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "settings", "clicks", "tagtoggle", "scrollkeep", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "settings", "clicks", "tagtoggle", "scrollkeep", "gitnotice", "nogit", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [int]$DebugPort = 9333
@@ -117,8 +117,21 @@ try {
   $want = { param($name) $Scenario -eq "all" -or $Scenario -eq $name }
 
   if (& $want "hover") {
-    Reload-Page $ws ($Url + $Hash) 
-    EnsureEdit $ws 
+    Reload-Page $ws ($Url + $Hash)
+    EnsureEdit $ws
+    # PR #3 起默认进入实时预览编辑态，光标会落到「第一行正文」；闸门 fixture 的正文首行
+    # 恰好是双链行，而 live preview 的活动行显示源文本、不生成 .cm-wikilink widget。
+    # 用真实点击把光标移出该行（selectionSet 会重算装饰），再测 hover tooltip。
+    $script:cdpSeq++
+    $rect = Eval-Js $ws "(() => { const c = document.querySelector('.cm-content'); if (!c) return null; const r = c.getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + 120), y: Math.round(r.top + 12) }); })()"
+    if ($rect -and $rect -notlike 'JS-ERROR*') {
+      $p = $rect | ConvertFrom-Json
+      $script:cdpSeq++
+      Send-Cdp $ws $script:cdpSeq "Input.dispatchMouseEvent" @{ type = "mousePressed"; x = $p.x; y = $p.y; button = "left"; clickCount = 1 }
+      $script:cdpSeq++
+      Send-Cdp $ws $script:cdpSeq "Input.dispatchMouseEvent" @{ type = "mouseReleased"; x = $p.x; y = $p.y; button = "left"; clickCount = 1 }
+      Start-Sleep -Milliseconds 400
+    }
     $script:cdpSeq++
     $js = @'
 (async () => {
@@ -263,32 +276,34 @@ try {
   if (& $want "preview") {
     Reload-Page $ws ($Url + $Hash)
     $js = @'
-(async () => {
+(() => {
   const findBtn = () =>
     Array.from(document.querySelectorAll('.doc-head .seg')).find((b) =>
       ['预览', '编辑'].includes(b.textContent.trim())
     );
-  let btn = findBtn();
+  const inEditor = () => !!document.querySelector('.editor-host:not([hidden]) .cm-editor');
+  const btn = findBtn();
   if (!btn) return 'no-toggle-button';
+  // PR #3（0e7aee4）后默认是实时预览编辑态，「预览」按钮降级为只读渲染视图开关。
+  // 切换是同步 DOM 操作，不用 awaitPromise，避免连续切换时 evaluate 拿不到结果。
+  const stats = { defaultEditing: inEditor() };
+  btn.click();
   const article = document.querySelector('.doc.preview');
   const firstBox = article ? article.querySelector('input.preview-todo') : null;
-  const stats = {
-    defaultPreview: !!(article && !article.hidden),
-    headings: article ? article.querySelectorAll('h1,h2,h3').length : 0,
-    tables: article ? article.querySelectorAll('table').length : 0,
-    images: article ? article.querySelectorAll('img.preview-img').length : 0,
-    links: article ? article.querySelectorAll('a').length : 0,
-    // 预览里的待办必须是真实、可勾选的复选框（#2）
-    todoBoxes: article ? article.querySelectorAll('input.preview-todo').length : 0,
-    todoIsInput: !!(firstBox && firstBox.tagName === 'INPUT' && firstBox.type === 'checkbox' && !firstBox.disabled),
-  };
-  // 预览/编辑往返
-  btn.click();
-  await new Promise((r) => setTimeout(r, 600));
-  stats.editorVisible = !!document.querySelector('.editor-host:not([hidden]) .cm-editor');
+  stats.readonlyPreview = !!(article && !article.hidden);
+  stats.headings = article ? article.querySelectorAll('h1,h2,h3').length : 0;
+  stats.tables = article ? article.querySelectorAll('table').length : 0;
+  stats.images = article ? article.querySelectorAll('img.preview-img').length : 0;
+  stats.links = article ? article.querySelectorAll('a').length : 0;
+  // 预览里的待办必须是真实、可勾选的复选框（#2）
+  stats.todoBoxes = article ? article.querySelectorAll('input.preview-todo').length : 0;
+  stats.todoIsInput = !!(firstBox && firstBox.tagName === 'INPUT' && firstBox.type === 'checkbox' && !firstBox.disabled);
+  // 只读视图 -> 编辑态 -> 再回只读视图，验证往返不丢内容
   const btn2 = findBtn();
   if (btn2) btn2.click();
-  await new Promise((r) => setTimeout(r, 600));
+  stats.editorVisible = inEditor();
+  const btn3 = findBtn();
+  if (btn3) btn3.click();
   stats.previewAgain = !!document.querySelector('.doc.preview:not([hidden])');
   return JSON.stringify(stats);
 })()
@@ -416,10 +431,54 @@ try {
     $results += "settings => " + (Eval-Js $ws $js)
   }
 
+  if (& $want "gitnotice") {
+    Reload-Page $ws ($Url + "#/")
+    $script:cdpSeq++
+    $js = @'
+(() => {
+  const n = document.getElementById('git-notice');
+  if (!n) return JSON.stringify({ gitNotice: false, reason: 'missing' });
+  const r = n.getBoundingClientRect();
+  const cs = getComputedStyle(n);
+  const text = (n.textContent || '').trim();
+  return JSON.stringify({
+    gitNotice: r.width > 0 && r.height > 0 && cs.visibility === 'visible' && cs.display !== 'none' && text.includes('仅本地版本历史，无远程备份'),
+    width: Math.round(r.width),
+    height: Math.round(r.height),
+    text: text
+  });
+})()
+'@
+    $results += "gitnotice => " + (Eval-Js $ws $js)
+  }
+
+  # 规格 v1.3.1 验收：--no-git 服务下，无备份提示必须隐藏，且 #git 要说明版本历史为何不可用。
+  # 这个场景由 release-gate 用另一端口、带 --no-git 的服务单独调用（正常服务下永远该显示提示）。
+  if (& $want "nogit") {
+    Reload-Page $ws ($Url + "#/")
+    $script:cdpSeq++
+    $js = @'
+(() => {
+  const n = document.getElementById('git-notice');
+  const box = document.getElementById('git');
+  if (!n || !box) return JSON.stringify({ noticeHidden: false, statusExplains: false, reason: 'missing' });
+  const r = n.getBoundingClientRect();
+  const cs = getComputedStyle(n);
+  const statusText = (box.textContent || '').trim();
+  return JSON.stringify({
+    noticeHidden: n.hidden && cs.display === 'none' && r.width === 0 && r.height === 0,
+    statusExplains: /版本历史已关闭|未检测到 git|版本历史初始化失败/.test(statusText),
+    statusText: statusText
+  });
+})()
+'@
+    $results += "nogit => " + (Eval-Js $ws $js)
+  }
+
   if (& $want "schedadd") {
     Reload-Page $ws ($Url + "#/") 
     $script:cdpSeq++
-    $filled = Eval-Js $ws "(() => { const row = document.querySelector('.schedule .schedule-add'); if (!row) return 'no-form'; const start = row.querySelector('input[type=time]'); const title = row.querySelector('.quick-add.title'); const btn = row.querySelector('.seg'); if (!start || !title || !btn) return 'no-inputs'; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; start.scrollIntoView({ block: 'center' }); setter.call(start, '11:00'); start.dispatchEvent(new Event('input', { bubbles: true })); setter.call(title, '闸门加的日程'); title.dispatchEvent(new Event('input', { bubbles: true })); btn.click(); return 'dispatched'; })()" 
+    $filled = Eval-Js $ws "(() => { const row = document.querySelector('.schedule .schedule-add'); if (!row) return 'no-form'; row.classList.add('is-open'); const start = row.querySelector('input[type=time]'); const title = row.querySelector('.quick-add.title'); const btn = row.querySelector('.action'); if (!start || !title || !btn) return 'no-inputs'; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; start.scrollIntoView({ block: 'center' }); setter.call(start, '11:00'); start.dispatchEvent(new Event('input', { bubbles: true })); setter.call(title, '闸门加的日程'); title.dispatchEvent(new Event('input', { bubbles: true })); btn.click(); return 'dispatched'; })()" 
     Start-Sleep -Milliseconds 2200
     $script:cdpSeq++
     $check = Eval-Js $ws "JSON.stringify({ filled: '$filled', added: !!Array.from(document.querySelectorAll('.slots .what')).find((e) => e.textContent.includes('闸门加的日程')), items: document.querySelectorAll('.slots li').length })" 
