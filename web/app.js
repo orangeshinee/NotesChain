@@ -967,8 +967,8 @@ function removeTodoRow(tr) {
   tr.addEventListener('transitionend', (event) => {
     if (event.target === tr && event.propertyName === 'opacity') once();
   });
-  const timer = window.setTimeout(once, 250); // --dur-state 200ms + 50ms 兜底
-  tr.addEventListener('transitionend', () => window.clearTimeout(timer));
+  // 超时兜底：once 自带 settled 守卫，触发后不会重复移除；不必在任意 transitionend 里清 timer
+  window.setTimeout(once, 250); // --dur-state 200ms + 50ms 兜底
   tr.classList.remove('busy');
   requestAnimationFrame(() => tr.classList.add('removing'));
 }
@@ -1034,7 +1034,7 @@ async function showFile(path, line) {
 
   const name = path.split('/').pop();
   const head = docHead(name, '', path);
-  const status = el('span', 'status saved', '已保存');
+  const status = el('span', 'status saved', '✓ 已保存');
   head.append(status);
   const wrap = el('div', 'wrap');
   const host = el('div', 'editor-host');
@@ -1852,14 +1852,20 @@ function markActive() {
 
 function setGit(git) {
   const box = document.getElementById('git');
+  const notice = document.getElementById('git-notice');
   if (!git) {
     box.textContent = '';
+    if (notice) notice.hidden = true;
     return;
   }
   if (!git.available) {
     box.textContent = git.disabled_by_user ? '版本历史已关闭' : '未检测到 git';
+    // 没有版本历史时不该宣称「仅本地版本历史」，隐藏无备份提示（避免误导）
+    if (notice) notice.hidden = true;
     return;
   }
+  // 版本历史可用：常驻显示无远程备份提示（PRD 6.1）
+  if (notice) notice.hidden = false;
   const parts = [];
   if (git.disabled) parts.push('自动提交已停止');
   parts.push(git.last_commit ? '上次提交 ' + git.last_commit.slice(0, 16).replace('T', ' ') : '尚无提交');
