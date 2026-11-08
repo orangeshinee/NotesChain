@@ -6,7 +6,7 @@ const state = {
   activePath: null,
   activeTag: null,
   searchStatus: 'all',
-  previewMode: true,
+  previewMode: false,
   viewSeq: 0,
   scheduleRange: 'week',
   scheduleData: null,
@@ -291,6 +291,7 @@ function renderList(nodes) {
     let cls = '';
     let inner;
     const task = /^\[([ xX])\]\s*(.*)$/.exec(node.text);
+    const sched = !task ? /^(\d{1,2}:\d{2}(?:[-–]\d{1,2}:\d{2})?)\s+(.+)$/.exec(node.text) : null;
     if (task) {
       const done = task[1].toLowerCase() === 'x';
       cls = done ? ' class="task done"' : ' class="task"';
@@ -302,6 +303,18 @@ function renderList(nodes) {
       }
       // 真复选框：预览里可直接勾选（事件在 renderPreviewNodes 里绑定）
       inner = `<input type="checkbox" class="preview-todo" data-line="${node.line}"${done ? ' checked' : ''}>${inline(taskText)}`;
+    } else if (sched) {
+      // 日程条目：时间徽标 + 标题 + @地点
+      cls = ' class="sched-item"';
+      const timeLabel = sched[1].replace(/\s*[-–]\s*/, '–');
+      let rest = sched[2];
+      let place = '';
+      const pm = /(^|\s)@([^\s#]+)/.exec(rest);
+      if (pm) {
+        place = pm[2];
+        rest = (rest.slice(0, pm.index) + rest.slice(pm.index + pm[0].length)).trim();
+      }
+      inner = `<span class="sched-time">${esc(timeLabel)}</span><span class="sched-title">${inline(rest)}</span>` + (place ? `<span class="sched-place">@${esc(place)}</span>` : '');
     } else {
       inner = inline(node.text);
     }
@@ -1027,21 +1040,29 @@ async function showFile(path, line) {
       }
       if (currentEditor && currentEditor.view) {
         currentEditor.focus();
-        // 进入编辑时若光标落在 frontmatter 内，移到正文首行，让元数据默认折叠成卡片（#15.4）
+        // 进入编辑时：若光标在文档开头或 frontmatter 内，落到正文首个「可编辑内容行」
+        // （跳过空行/标题/围栏），避免首屏标题露出 "# " 看起来左边多一个空格。
         try {
-          const doc = currentEditor.view.state.doc;
+          const view = currentEditor.view;
+          const doc = view.state.doc;
+          let fmEnd = 0;
           if (doc.line(1).text.trim() === '---') {
-            let end = -1;
             for (let n = 2; n <= doc.lines; n += 1) {
-              if (doc.line(n).text.trim() === '---') { end = n; break; }
+              if (doc.line(n).text.trim() === '---') { fmEnd = n; break; }
             }
-            if (end > 0) {
-              const head = currentEditor.view.state.selection.main.head;
-              if (head <= doc.line(end).to) {
-                const bodyFrom = end < doc.lines ? doc.line(end + 1).from : doc.line(end).to;
-                currentEditor.view.dispatch({ selection: { anchor: bodyFrom } });
-              }
+          }
+          const head = view.state.selection.main.head;
+          const fmEndPos = fmEnd ? doc.line(fmEnd).to : 0;
+          if (head <= fmEndPos) {
+            let anchor = 0;
+            for (let n = fmEnd + 1; n <= doc.lines; n += 1) {
+              const t = doc.line(n).text.trim();
+              if (t === '' || /^#{1,6}\s/.test(t) || /^(`{3,}|~{3,})/.test(t) || /^[-+*]\s/.test(t) || /^\d+\.\s/.test(t) || /^>/.test(t)) continue;
+              anchor = doc.line(n).from;
+              break;
             }
+            if (!anchor) anchor = doc.line(doc.lines).to;
+            view.dispatch({ selection: { anchor } });
           }
         } catch (err) {
           /* ignore */
@@ -1218,8 +1239,9 @@ async function showFile(path, line) {
     },
   });
   currentEditor.focus();
-  state.previewMode = true;
-  setPreview(true);
+  // 默认进入编辑态（Obsidian Live Preview 式实时预览）；「预览」按钮降级为只读渲染视图切换
+  state.previewMode = false;
+  setPreview(false);
   if (line) highlightLine(line);
   if (state.links) {
     mountBacklinks(wrap, path);

@@ -594,6 +594,31 @@ body.wide .file-layout .wrap { max-width: none; flex: 1 1 auto; }
 .doc li.task .box { margin-right: 6px; color: var(--faint); font-family: var(--font-mono); }
 .doc li.task.done { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
 
+/* 日程条目（日记「日程」里的 "HH:mm[-HH:mm] 标题 @地点 #标签"），单独样式 */
+.sched-time {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: var(--fs-md);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 999px;
+  padding: .06em .5em;
+  white-space: nowrap;
+  margin-right: .45em;
+}
+.sched-place { color: var(--muted); font-size: var(--fs-sm); }
+.doc li.sched-item {
+  list-style: none;
+  margin-left: -1.3em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .35em;
+  padding: .2em 0;
+}
+.doc li.sched-item .sched-title { font-weight: 600; }
+
 .doc a { color: var(--accent); text-underline-offset: 3px; }
 .doc blockquote {
   margin: .9em 0;
@@ -654,6 +679,8 @@ body.wide .file-layout .wrap { max-width: none; flex: 1 1 auto; }
 .text .tag:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
 .doc .wikilink, .doc.preview .wikilink { color: var(--accent); border-bottom: 1px dashed var(--line); }
+/* 编辑态双链：与预览一致（accent + 虚下划线），否则 widget 只是普通文字，看不出是双链 */
+.cm-wikilink { color: var(--accent); border-bottom: 1px dashed var(--line); cursor: pointer; }
 .cm-wikilink.missing { color: var(--faint); border-bottom: 1px dashed var(--faint); }
 .doc .link-ph { color: var(--accent); border-bottom: 1px solid var(--line-soft); }
 .doc .img-ph {
@@ -1022,7 +1049,21 @@ pre.patch {
 /* ---------------- 编辑器 ---------------- */
 .editor-host { min-height: 60vh; }
 .editor-host .cm-editor { outline: none; }
-.cm-syntax-mark { opacity: 0; }
+/* 隐藏 Markdown 标记符：必须真正不占位（opacity:0 会保留宽度，导致标题/行内代码左移） */
+.cm-syntax-mark { display: none; }
+.cm-bullet { color: var(--muted); margin-right: .4em; }
+.editor-host .cm-line.cm-blockquote {
+  border-left: 2px solid var(--accent);
+  padding-left: 16px;
+  color: var(--muted);
+  line-height: var(--lh-body);
+}
+.editor-host .cm-line.cm-hr {
+  border-top: 1px solid var(--line-soft);
+  padding: .9em 0;
+}
+/* 空行：收紧高度，让块间距接近预览（预览用段落/列表 margin≈11~15px，而默认空行≈28px 明显偏松） */
+.editor-host .cm-line.cm-blank { line-height: .9; }
 .editor-fallback {
   width: 100%;
   min-height: 60vh;
