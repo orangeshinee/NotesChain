@@ -1035,6 +1035,8 @@ pre.patch {
   border-top: 1px solid var(--line-soft);
   padding: .9em 0;
 }
+/* 空行：收紧高度，让块间距接近预览（预览用段落/列表 margin≈11~15px，而默认空行≈28px 明显偏松） */
+.editor-host .cm-line.cm-blank { line-height: .9; }
 .editor-fallback {
   width: 100%;
   min-height: 60vh;

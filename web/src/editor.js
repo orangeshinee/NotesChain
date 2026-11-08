@@ -348,6 +348,11 @@ function buildLineDecorations(state) {
       decos.push(Decoration.line({ class: 'cm-codeblock' }).range(doc.line(n).from));
       continue;
     }
+    // 空行：标记出来以便收紧高度（默认 1.85em≈28px，比预览的段落间距松散很多）
+    if (text.trim() === '') {
+      decos.push(Decoration.line({ class: 'cm-blank' }).range(doc.line(n).from));
+      continue;
+    }
     const isHr = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(text);
     if (isHr) {
       decos.push(Decoration.line({ class: 'cm-hr' }).range(doc.line(n).from));

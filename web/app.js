@@ -1027,21 +1027,29 @@ async function showFile(path, line) {
       }
       if (currentEditor && currentEditor.view) {
         currentEditor.focus();
-        // 进入编辑时若光标落在 frontmatter 内，移到正文首行，让元数据默认折叠成卡片（#15.4）
+        // 进入编辑时：若光标在文档开头或 frontmatter 内，落到正文首个「可编辑内容行」
+        // （跳过空行/标题/围栏），避免首屏标题露出 "# " 看起来左边多一个空格。
         try {
-          const doc = currentEditor.view.state.doc;
+          const view = currentEditor.view;
+          const doc = view.state.doc;
+          let fmEnd = 0;
           if (doc.line(1).text.trim() === '---') {
-            let end = -1;
             for (let n = 2; n <= doc.lines; n += 1) {
-              if (doc.line(n).text.trim() === '---') { end = n; break; }
+              if (doc.line(n).text.trim() === '---') { fmEnd = n; break; }
             }
-            if (end > 0) {
-              const head = currentEditor.view.state.selection.main.head;
-              if (head <= doc.line(end).to) {
-                const bodyFrom = end < doc.lines ? doc.line(end + 1).from : doc.line(end).to;
-                currentEditor.view.dispatch({ selection: { anchor: bodyFrom } });
-              }
+          }
+          const head = view.state.selection.main.head;
+          const fmEndPos = fmEnd ? doc.line(fmEnd).to : 0;
+          if (head <= fmEndPos) {
+            let anchor = 0;
+            for (let n = fmEnd + 1; n <= doc.lines; n += 1) {
+              const t = doc.line(n).text.trim();
+              if (t === '' || /^#{1,6}\s/.test(t) || /^(`{3,}|~{3,})/.test(t)) continue;
+              anchor = doc.line(n).from;
+              break;
             }
+            if (!anchor) anchor = doc.line(doc.lines).to;
+            view.dispatch({ selection: { anchor } });
           }
         } catch (err) {
           /* ignore */
