@@ -306,6 +306,22 @@ class PriorityWidget extends WidgetType {
   }
 }
 
+/** 无序列表圆点（编辑态把 "- " 标记替换成 •） */
+class BulletWidget extends WidgetType {
+  eq() {
+    return true;
+  }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'cm-bullet';
+    span.textContent = '•';
+    return span;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
 /** 行级排版：标题 h1-h6、已完成待办删除线、代码块底色 */
 function buildLineDecorations(state) {
   const doc = state.doc;
@@ -332,9 +348,15 @@ function buildLineDecorations(state) {
       decos.push(Decoration.line({ class: 'cm-codeblock' }).range(doc.line(n).from));
       continue;
     }
+    const isHr = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(text);
+    if (isHr) {
+      decos.push(Decoration.line({ class: 'cm-hr' }).range(doc.line(n).from));
+      continue;
+    }
     const h = /^(#{1,6})\s+/.exec(text);
     if (h) decos.push(Decoration.line({ class: 'cm-h' + h[1].length }).range(doc.line(n).from));
     else if (/^\s*- \[[xX]\]/.test(text)) decos.push(Decoration.line({ class: 'cm-task-done' }).range(doc.line(n).from));
+    else if (/^\s*>/.test(text)) decos.push(Decoration.line({ class: 'cm-blockquote' }).range(doc.line(n).from));
   }
   return Decoration.set(decos, true);
 }
@@ -606,6 +628,33 @@ function buildDecorations(view, assetFor, linksEnabled, linkExists) {
           if (marker >= 0) {
             ranges.push({ from: line.from + marker, to: line.to, deco: markHide });
           }
+        }
+
+        // 无序列表圆点：隐藏 "- "/"+ " 标记，渲染成 •（任务项已由上面处理）
+        if (!task) {
+          const ul = /^(\s*)[-+]\s+/.exec(text);
+          if (ul) {
+            ranges.push({
+              from: line.from + ul[1].length,
+              to: line.from + ul[0].length,
+              deco: Decoration.replace({ widget: new BulletWidget() }),
+            });
+          }
+        }
+
+        // 引用块：隐藏行首 "> "（可嵌套）；行样式由 .cm-blockquote 提供
+        const bq = /^(\s*)((?:>\s?)+)/.exec(text);
+        if (bq && bq[0].length > bq[1].length) {
+          ranges.push({
+            from: line.from + bq[1].length,
+            to: line.from + bq[0].length,
+            deco: markHide,
+          });
+        }
+
+        // 分割线：隐藏整行文本，横线由 .cm-hr 的上边框提供
+        if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(text) && text.length) {
+          ranges.push({ from: line.from, to: line.to, deco: markHide });
         }
 
         for (const m of text.matchAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g)) {

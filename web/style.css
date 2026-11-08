@@ -1022,7 +1022,19 @@ pre.patch {
 /* ---------------- 编辑器 ---------------- */
 .editor-host { min-height: 60vh; }
 .editor-host .cm-editor { outline: none; }
-.cm-syntax-mark { opacity: 0; }
+/* 隐藏 Markdown 标记符：必须真正不占位（opacity:0 会保留宽度，导致标题/行内代码左移） */
+.cm-syntax-mark { display: none; }
+.cm-bullet { color: var(--muted); margin-right: .4em; }
+.editor-host .cm-line.cm-blockquote {
+  border-left: 2px solid var(--accent);
+  padding-left: 16px;
+  color: var(--muted);
+  line-height: var(--lh-body);
+}
+.editor-host .cm-line.cm-hr {
+  border-top: 1px solid var(--line-soft);
+  padding: .9em 0;
+}
 .editor-fallback {
   width: 100%;
   min-height: 60vh;
