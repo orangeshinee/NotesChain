@@ -15,3 +15,7 @@ skillhub.install.md
 # 本地凭据缓存（误建在工作区时也不该进仓库）
 .git.git-credentials
 .git-credentials
+
+# 本地打包 / 临时构建产物
+/release-out/
+/.pkg-stage/
