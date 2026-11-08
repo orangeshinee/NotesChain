@@ -1,6 +1,6 @@
 # NotesChain 前端设计规格（纸感基线 v0.6-7）
 
-> **状态：D1–D4 已确认（全 A），已落地；v1.3.1 按 A 处理窄屏（随抽屉）+ `#git-notice` 按 git 状态显隐** ｜ **v1.3.1（2026-11-08）**
+> **状态：D1–D4 已确认（全 A），已落地；v1.3.1 按 A 处理窄屏（随抽屉）+ `#git-notice` 按 git 状态显隐；含 2026-11-08 闸门复核修订（`is_repo` 边界 / Git 状态失败文案 / `nogit` 自动化验收）** ｜ **v1.3.1（2026-11-08）**
 > 日期：2026-11-08
 > 依据：`docs/noteschain-prd-v05.md`（产品行为以此为准）、`web/style.css`、`web/app.js`、`web/src/editor.js`、`docs/plan-2026-11-02-feedback.md`
 > 设计上下文：项目根 `.impeccable.md`
@@ -125,11 +125,13 @@
   <div class="git-notice" id="git-notice" hidden>仅本地版本历史，无远程备份</div>
   ```
   样式：`--fs-meta` + `--faint`、`padding: 0 16px 8px`、`white-space: normal`、`line-height: 1.5`。**禁止** `white-space: nowrap` / `text-overflow: ellipsis` / `max-width` 截断。
-- **显隐/文案随 git 状态**（修复「无版本历史却宣称仅本地版本历史」的误导）：`setGit()` 里当 `git.available` 为真才显示；`--no-git` / 未装 git 时隐藏（`#git` 自身已显示「版本历史已关闭 / 未检测到 git」）。
+- **显隐/文案随 git 状态**（修复「无版本历史却宣称仅本地版本历史」的误导）：`setGit()` 里只有 **`git.available` 为真且 `git.is_repo !== false`** 才显示。`available` 只代表装了 git；自动 `init_repo` 失败时 `is_repo=false`，同样没有版本历史，也必须隐藏（判定用 `=== false`，避免降级响应缺字段时误判）。隐藏时 `#git` 给出原因：「版本历史已关闭」（`--no-git`）/「未检测到 git」/「版本历史初始化失败」。`/api/git/status` 请求失败时显示「Git 状态读取失败」，不留一块空白。
+- 样式里显式补 `.git-notice[hidden] { display: none; }`：UA 的 `[hidden]` 特异性低，日后若给 `.git-notice` 加 `display` 会被覆盖（项目里 `.more-menu[hidden]` 就是同样补写的先例）。
 - **窄屏（860px 断点）**：侧栏为抽屉，该行随侧栏出现（打开抽屉可见），**不做额外顶栏常驻**。这是「侧栏内常驻（D4=A）」与「窄屏常驻」无法兼得时的取舍，按 **A** 接受。
 - `.brand .git`（`style.css:177-185`）保持原样，继续只放提交时间等短状态；`box.title` 保留，只放仓库根、最近错误等次要详情。
 - **位置错配已知**：PRD 6.1 写的是「顶部状态区」，实现把 Git 状态放在侧边栏 brand。**D4 = A**：本轮不搬动现有结构（改动面更大），改在侧边栏 brand 区新增常驻行满足「常驻可见」的硬要求；PRD 6.1 的措辞留到下次修订校正。
-- 验收：**git 可用时**不 hover 可见；浅/深两套主题下对比度 ≥4.5:1；`tools/browser-probe.ps1` 用现有的 `Eval-Js` 加一条断言，检查 `#git-notice` 存在、`getBoundingClientRect()` 宽高非零、`getComputedStyle().visibility === 'visible'`，且 `textContent` 含「仅本地版本历史，无远程备份」。（`--no-git` / 无 git 时应为隐藏，另断言 `hidden`。）
+- 验收：**git 可用时**不 hover 可见；浅/深两套主题下对比度 ≥4.5:1；`tools/browser-probe.ps1` 的 `gitnotice` 场景用 `Eval-Js` 断言 `#git-notice` 存在、宽高非零、`visibility === 'visible'`、`display !== 'none'`，且文案含「仅本地版本历史，无远程备份」。
+- 验收（`--no-git` 分支，已自动化）：`release-gate.ps1` 另起一个带 `--no-git` 的第二服务（端口 `$Port + 1`），跑 `nogit` 场景断言 `hidden === true` + `display:none` + 宽高为零，且 `#git` 文案能说明版本历史为何不可用；两个场景都纳入闸门汇总，不依赖人工实测。
 
 ### 5.2 保存状态四态：不只靠颜色
 
