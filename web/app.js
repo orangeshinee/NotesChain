@@ -6,7 +6,7 @@ const state = {
   activePath: null,
   activeTag: null,
   searchStatus: 'all',
-  previewMode: true,
+  previewMode: false,
   viewSeq: 0,
   scheduleRange: 'week',
   scheduleData: null,
@@ -1226,8 +1226,9 @@ async function showFile(path, line) {
     },
   });
   currentEditor.focus();
-  state.previewMode = true;
-  setPreview(true);
+  // 默认进入编辑态（Obsidian Live Preview 式实时预览）；「预览」按钮降级为只读渲染视图切换
+  state.previewMode = false;
+  setPreview(false);
   if (line) highlightLine(line);
   if (state.links) {
     mountBacklinks(wrap, path);
