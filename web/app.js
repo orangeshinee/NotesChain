@@ -291,6 +291,7 @@ function renderList(nodes) {
     let cls = '';
     let inner;
     const task = /^\[([ xX])\]\s*(.*)$/.exec(node.text);
+    const sched = !task ? /^(\d{1,2}:\d{2}(?:[-–]\d{1,2}:\d{2})?)\s+(.+)$/.exec(node.text) : null;
     if (task) {
       const done = task[1].toLowerCase() === 'x';
       cls = done ? ' class="task done"' : ' class="task"';
@@ -302,6 +303,18 @@ function renderList(nodes) {
       }
       // 真复选框：预览里可直接勾选（事件在 renderPreviewNodes 里绑定）
       inner = `<input type="checkbox" class="preview-todo" data-line="${node.line}"${done ? ' checked' : ''}>${inline(taskText)}`;
+    } else if (sched) {
+      // 日程条目：时间徽标 + 标题 + @地点
+      cls = ' class="sched-item"';
+      const timeLabel = sched[1].replace(/\s*[-–]\s*/, '–');
+      let rest = sched[2];
+      let place = '';
+      const pm = /(^|\s)@([^\s#]+)/.exec(rest);
+      if (pm) {
+        place = pm[2];
+        rest = (rest.slice(0, pm.index) + rest.slice(pm.index + pm[0].length)).trim();
+      }
+      inner = `<span class="sched-time">${esc(timeLabel)}</span><span class="sched-title">${inline(rest)}</span>` + (place ? `<span class="sched-place">@${esc(place)}</span>` : '');
     } else {
       inner = inline(node.text);
     }
@@ -1044,7 +1057,7 @@ async function showFile(path, line) {
             let anchor = 0;
             for (let n = fmEnd + 1; n <= doc.lines; n += 1) {
               const t = doc.line(n).text.trim();
-              if (t === '' || /^#{1,6}\s/.test(t) || /^(`{3,}|~{3,})/.test(t)) continue;
+              if (t === '' || /^#{1,6}\s/.test(t) || /^(`{3,}|~{3,})/.test(t) || /^[-+*]\s/.test(t) || /^\d+\.\s/.test(t) || /^>/.test(t)) continue;
               anchor = doc.line(n).from;
               break;
             }

@@ -59,6 +59,7 @@ const markHide = Decoration.mark({ class: 'cm-syntax-mark' });
 const tagMark = Decoration.mark({ class: 'cm-tag' });
 const timeMark = Decoration.mark({ class: 'cm-time' });
 const inlineCodeMark = Decoration.mark({ class: 'cm-inline-code' });
+const schedPlaceMark = Decoration.mark({ class: 'sched-place' });
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -322,6 +323,26 @@ class BulletWidget extends WidgetType {
   }
 }
 
+/** 日程时间徽标（日记「日程」行 HH:mm[-HH:mm]） */
+class SchedTimeWidget extends WidgetType {
+  constructor(label) {
+    super();
+    this.label = label;
+  }
+  eq(other) {
+    return other.label === this.label;
+  }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'sched-time';
+    span.textContent = this.label;
+    return span;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
 /** 行级排版：标题 h1-h6、已完成待办删除线、代码块底色 */
 function buildLineDecorations(state) {
   const doc = state.doc;
@@ -361,6 +382,7 @@ function buildLineDecorations(state) {
     const h = /^(#{1,6})\s+/.exec(text);
     if (h) decos.push(Decoration.line({ class: 'cm-h' + h[1].length }).range(doc.line(n).from));
     else if (/^\s*- \[[xX]\]/.test(text)) decos.push(Decoration.line({ class: 'cm-task-done' }).range(doc.line(n).from));
+    else if (/^\s*[-+]\s+\d{1,2}:\d{2}/.test(text)) decos.push(Decoration.line({ class: 'cm-sched' }).range(doc.line(n).from));
     else if (/^\s*>/.test(text)) decos.push(Decoration.line({ class: 'cm-blockquote' }).range(doc.line(n).from));
   }
   return Decoration.set(decos, true);
@@ -619,6 +641,25 @@ function buildDecorations(view, assetFor, linksEnabled, linkExists) {
       if (!activeLines.has(line.number)) {
         const ranges = [];
 
+        // 日程条目：日记中 "HH:mm[-HH:mm] 标题 @地点 #标签" 的列表行，用时间徽标 + 地点样式单独处理
+        const sched = /^(\s*)[-+]\s+(\d{1,2}:\d{2}(?:[-–]\d{1,2}:\d{2})?)(?=\s|$)/.exec(text);
+        if (sched) {
+          const bulletM = /^(\s*)[-+]\s+/.exec(text);
+          if (bulletM) {
+            ranges.push({ from: line.from + bulletM[1].length, to: line.from + bulletM[0].length, deco: markHide });
+          }
+          const timeStart = line.from + sched[0].length - sched[2].length;
+          ranges.push({
+            from: timeStart,
+            to: line.from + sched[0].length,
+            deco: Decoration.replace({ widget: new SchedTimeWidget(sched[2].replace(/\s*[-–]\s*/, '–')) }),
+          });
+          for (const pm of text.matchAll(/(^|\s)@([^\s#]+)/g)) {
+            const s = line.from + pm.index + pm[1].length;
+            ranges.push({ from: s, to: s + 1 + pm[2].length, deco: schedPlaceMark });
+          }
+        }
+
         const task = /^(\s*)- \[([ xX])\]\s?/.exec(text);
         if (task) {
           ranges.push({
@@ -635,8 +676,8 @@ function buildDecorations(view, assetFor, linksEnabled, linkExists) {
           }
         }
 
-        // 无序列表圆点：隐藏 "- "/"+ " 标记，渲染成 •（任务项已由上面处理）
-        if (!task) {
+        // 无序列表圆点：隐藏 "- "/"+ " 标记，渲染成 •（任务项/日程项不适用）
+        if (!task && !sched) {
           const ul = /^(\s*)[-+]\s+/.exec(text);
           if (ul) {
             ranges.push({
@@ -693,10 +734,12 @@ function buildDecorations(view, assetFor, linksEnabled, linkExists) {
           }
         }
 
-        // 日程时间 HH:mm[-HH:mm] 加粗（PRD 5.2 L1）
-        for (const m of text.matchAll(/(^|\s)(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?)/g)) {
-          const startAt = line.from + m.index + m[1].length;
-          ranges.push({ from: startAt, to: startAt + m[2].length, deco: timeMark });
+        // 日程时间 HH:mm[-HH:mm] 加粗（PRD 5.2 L1；日程行已用时间徽标替代）
+        if (!sched) {
+          for (const m of text.matchAll(/(^|\s)(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?)/g)) {
+            const startAt = line.from + m.index + m[1].length;
+            ranges.push({ from: startAt, to: startAt + m[2].length, deco: timeMark });
+          }
         }
 
         for (const m of text.matchAll(/(^|[\s(（，。；：])#([\w\u3400-\u9fff/-]+)/g)) {
