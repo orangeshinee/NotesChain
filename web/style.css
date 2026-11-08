@@ -1335,6 +1335,8 @@ pre.patch {
   line-height: 1.5;
   white-space: normal;
 }
+/* 显式兜底：避免以后给 .git-notice 加 display 时把 UA 的 [hidden] 覆盖掉 */
+.git-notice[hidden] { display: none; }
 
 /* 主动作：每个 section 至多一个，不与 .seg 的筛选/切换同形 */
 .action {
@@ -1353,8 +1355,9 @@ pre.patch {
 .action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* D1 = A：日程表单默认折叠，点「添加日程」展开。
-   折叠用 display 切换（display 本身不可过渡）：展开时用 animation 做一次性淡入、收起即时——
-   等价于「进入淡入 / 退出立即隐藏」的意图，同时避免用 hidden 让折叠态仍占位。 */
+   用 .is-open 单一开关控制 display：若改用 [hidden]，UA 的 display:none 会被
+   .schedule-add { display:flex } 覆盖而失效（项目里 .more-menu[hidden] 就是显式补写的先例）。
+   display 本身不可过渡，所以展开只用 animation 做一次性淡入（仅 opacity），收起即时隐藏。 */
 .schedule-add { display: none; }
 .schedule-add.is-open {
   display: flex;

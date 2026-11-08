@@ -101,6 +101,39 @@ if (-not $SkipBrowser) {
       if ($LASTEXITCODE -ne 0) { $probeCode = $LASTEXITCODE }
       $probeText += (($one -join "`n") + "`n")
     }
+
+    # 规格 v1.3.1 验收：另起一个 --no-git 服务，验证无版本历史时 #git-notice 隐藏。
+    # 不能并进上面的 scenarios —— 那些场景共用同一个（git 可用的）服务实例。
+    $nogitPort = $Port + 1
+    $nogitLog = Join-Path $gate "server-nogit.log"
+    $nogitProc = Start-Process -FilePath $exe -ArgumentList @(
+      "--dir", "`"$gate`"", "--port", $nogitPort, "--no-git", "--links"
+    ) -RedirectStandardOutput $nogitLog -RedirectStandardError (Join-Path $gate "server-nogit.err.log") -NoNewWindow -PassThru
+    try {
+      $nogitToken = $null
+      $ngDeadline = (Get-Date).AddSeconds(20)
+      while (-not $nogitToken -and (Get-Date) -lt $ngDeadline) {
+        if (Test-Path $nogitLog) {
+          $raw = Get-Content $nogitLog -Raw
+          if ($raw) {
+            $m = [regex]::Match($raw, 'token=([0-9a-f]{64})')
+            if ($m.Success) { $nogitToken = $m.Groups[1].Value }
+          }
+        }
+        Start-Sleep -Milliseconds 150
+      }
+      if (-not $nogitToken) {
+        Record "浏览器：nogit（服务未就绪）" $false "--no-git 服务未输出 token"
+      } else {
+        $one = & pwsh -NoProfile -File (Join-Path $PSScriptRoot "browser-probe.ps1") -Url "http://127.0.0.1:$nogitPort/?token=$nogitToken" -Hash $hash -NotesDir $gate -Scenario nogit 2>&1
+        if ($LASTEXITCODE -ne 0) { $probeCode = $LASTEXITCODE }
+        $probeText += (($one -join "`n") + "`n")
+      }
+    }
+    finally {
+      Get-Process -Id $nogitProc.Id -ErrorAction SilentlyContinue | Stop-Process -Force
+    }
+
     $checks = [regex]::Matches($probeText, '(\w[\w-]*) => (.*)')
     if ($probeCode -ne 0) {
       Record "浏览器探针（非零退出）" $false "probe exit=$probeCode"
@@ -121,6 +154,9 @@ if (-not $SkipBrowser) {
       }
       if ($name -eq 'gitnotice') {
         $ok = $ok -and $value -match '"gitNotice":true'
+      }
+      if ($name -eq 'nogit') {
+        $ok = $ok -and $value -match '"noticeHidden":true' -and $value -match '"statusExplains":true'
       }
       if ($name -eq 'clicks') {
         $ok = $ok -and $value -match '"wikiFound":true' -and $value -match '"afterWiki":"#/file/'

@@ -1854,12 +1854,17 @@ function setGit(git) {
   const box = document.getElementById('git');
   const notice = document.getElementById('git-notice');
   if (!git) {
-    box.textContent = '';
+    // 接口失败时不留一块空白，明确告知状态未知；提示同样隐藏，避免误导
+    box.textContent = 'Git 状态读取失败';
     if (notice) notice.hidden = true;
     return;
   }
-  if (!git.available) {
-    box.textContent = git.disabled_by_user ? '版本历史已关闭' : '未检测到 git';
+  // available 只表示装了 git；is_repo=false（自动 init 失败）时同样没有版本历史。
+  // 用 === false 判定，避免旧版后端 / 降级响应缺字段时被误判成「无仓库」。
+  if (!git.available || git.is_repo === false) {
+    box.textContent = git.disabled_by_user
+      ? '版本历史已关闭'
+      : (git.available ? '版本历史初始化失败' : '未检测到 git');
     // 没有版本历史时不该宣称「仅本地版本历史」，隐藏无备份提示（避免误导）
     if (notice) notice.hidden = true;
     return;

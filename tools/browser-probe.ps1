@@ -3,7 +3,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Url,
   [string]$Hash = "",
-  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "settings", "clicks", "tagtoggle", "scrollkeep", "gitnotice", "all")]
+  [ValidateSet("hover", "todo", "autosave", "conflict", "resize", "search", "tag", "preview", "virtual", "quickadd", "schedadd", "schedjump", "export", "settings", "clicks", "tagtoggle", "scrollkeep", "gitnotice", "nogit", "all")]
   [string]$Scenario = "all",
   [string]$NotesDir = "",
   [int]$DebugPort = 9333
@@ -450,6 +450,29 @@ try {
 })()
 '@
     $results += "gitnotice => " + (Eval-Js $ws $js)
+  }
+
+  # 规格 v1.3.1 验收：--no-git 服务下，无备份提示必须隐藏，且 #git 要说明版本历史为何不可用。
+  # 这个场景由 release-gate 用另一端口、带 --no-git 的服务单独调用（正常服务下永远该显示提示）。
+  if (& $want "nogit") {
+    Reload-Page $ws ($Url + "#/")
+    $script:cdpSeq++
+    $js = @'
+(() => {
+  const n = document.getElementById('git-notice');
+  const box = document.getElementById('git');
+  if (!n || !box) return JSON.stringify({ noticeHidden: false, statusExplains: false, reason: 'missing' });
+  const r = n.getBoundingClientRect();
+  const cs = getComputedStyle(n);
+  const statusText = (box.textContent || '').trim();
+  return JSON.stringify({
+    noticeHidden: n.hidden && cs.display === 'none' && r.width === 0 && r.height === 0,
+    statusExplains: /版本历史已关闭|未检测到 git|版本历史初始化失败/.test(statusText),
+    statusText: statusText
+  });
+})()
+'@
+    $results += "nogit => " + (Eval-Js $ws $js)
   }
 
   if (& $want "schedadd") {
