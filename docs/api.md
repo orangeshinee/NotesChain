@@ -200,15 +200,20 @@ Query：`tag`（含子标签）、`status`（`open` | `done` | `all`，默认 `o
 
 ### POST /api/todos/append
 
-快速新增一条 `- [ ] …` 到 `## 待办` 段。
-
-请求体：
+追加一条 `- [ ] …`。请求体：
 
 ```json
-{ "text": "买牛奶 #生活", "path": "可选，默认今天的日记" }
+{ "text": "买牛奶 #生活", "path": "2026/11/2026-11-09.md", "section": "## 待办",
+  "create": null, "unique": false, "dry_run": false }
 ```
 
-成功：`{ "path": "...", "line": 18, "version": "..." }`
+- `path`：缺省今日日记；`section`：缺省 `## 待办`，接受完整标题行或纯标题名，段不存在自动新建。
+- `create`：不传时沿用旧行为（文件不存在按模板新建）；显式 `false` 返回 `404 not_found`。
+- `unique`：目标段内已有完全相同行时返回 `action: "skipped"`，不写盘。
+- `dry_run`：只返回将要插入的位置，零写入。
+- 三个 append 接口共用这套字段；`target` 是 `notes/append` 的旧字段名，等价于 `path`。
+
+成功：`{ "ok": true, "action": "inserted|skipped|dry_run", "path": "...", "section": "...", "line": 18, "text": "- [ ] 买牛奶", "version": "..." }`
 
 ### POST /api/notes/append
 
@@ -221,10 +226,12 @@ Query：`tag`（含子标签）、`status`（`open` | `done` | `all`，默认 `o
 ```
 
 - `text` 单行、非空；含换行返回 `400 bad_request`。
-- 追加保留原文件行尾风格（CRLF 文件用 `\r\n`）；文件尾无换行时先补一个。
+- `section` 不给则追加到文件尾（旧行为）；给了则按标题追加到指定段，段不存在自动新建。
+- 写入逐行保留原 eol 与 BOM，避开代码块内的同名标题，按目标标题层级判定段尾。
+- 其余字段与 `POST /api/todos/append` 一致；`target` 等价于 `path`。
 - 写顺序与其它写接口一致：`resolve()` → 按文件锁 → 原子写 → 更新索引 → `git.notify()` → `revision+1`。
 
-成功：`{ "path": "...", "line": 18, "version": "..." }`（`line` 为追加行的行号）
+成功：`{ "ok": true, "action": "inserted|skipped|dry_run", "path": "...", "section": "...", "line": 18, "text": "...", "version": "..." }`（`line` 为追加行的行号）
 
 ---
 
@@ -323,9 +330,13 @@ Query：`range` = `today` | `week`(默认) | `month`。
 
 ### POST /api/schedule/append
 
-请求体 `{ "text": "15:00-16:00 周会 @会议室" }`，写入今天日记的 `## 日程`（兼容 `## 今日日程`）。
+追加一条 `- HH:mm …`。请求体字段同 `POST /api/todos/append`：`text` / `path` / `section` / `create` / `unique` / `dry_run`。
 
-成功：`{ "path": "...", "line": 6, "version": "..." }`
+- `path` 缺省今天的日记；`section` 缺省走候选列表 `["## 日程", "## 今日日程"]`，兼容模板改名前的老笔记。
+- `section` 只允许这两个标题，传别的返回 `400 bad_request`：日程解析器只认这两个段，写到别处会静默不可见。
+- 显式给了白名单标题时仍按候选列表解析，避免老笔记被新建第二个日程段。
+
+成功体同 `POST /api/todos/append`。
 
 ---
 

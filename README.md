@@ -45,6 +45,30 @@ MyNotes/
 - Git：自动 init、防抖提交（默认 5 分钟，可配）、历史/diff（按文件折叠着色）、按文件回滚
 - 安全：启动 token + Cookie、路径穿越防护；`--no-token` 可本地免鉴权
 
+## 定向写入 CLI
+
+v0.1.3 已内置终端 CLI（`today` / `todo` / `search` / `schedule` / `note` / `git`）。以下命令在**服务运行时**另开终端执行，可指定文件与标题：
+
+```bash
+noteschain todo add "买牛奶 #生活" --file 2026/11/2026-11-09.md --section "## 待办"
+noteschain note add "和财务确认口径" --file raw/周报.md --section "## 记录"
+noteschain schedule --add "15:00-16:00 周会 @会议室" --file 2026/11/2026-11-09.md
+noteschain todo add "发周报" --dry-run --json
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `--file` | 目标文件（相对 notes 根），缺省今日日记 |
+| `--section` | 目标标题，接受 `## 待办` 或 `待办`；todo 缺省 `## 待办`，schedule 缺省 `## 日程` / `## 今日日程`，note 不传则追加到文件尾（旧行为） |
+| `--create` | 显式允许新建；不传时沿用 v0.1.3 行为（今日日记按模板新建，其他目标新建空文件） |
+| `--unique` | 目标段内已有完全相同行时跳过 |
+| `--dry-run` | 只预览，零写入 |
+| `--json` | 全局标志，原样输出服务端返回体 |
+
+三个 append 接口共用同一套字段与写顺序（`resolve()` → 按文件锁 → 原子写 → 索引 → `git.notify()` → `revision+1`），CLI 绝不直接读写笔记文件。日程的 `--section` 只允许 `## 日程` / `## 今日日程`，写到别处不会出现在日程视图。
+
+不传任何新参数时，旧命令行为不变。退出码沿用 v0.1.3 约定：`0` 成功、`1` 其他、`2` 服务端未启动、`3` 鉴权失败、`4` 服务端业务错误。
+
 ## 验证
 
 ```powershell
