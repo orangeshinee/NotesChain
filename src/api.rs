@@ -845,9 +845,15 @@ fn resolve_target_inner(index: &crate::index::Index, raw: &str) -> Result<String
     if trimmed.contains('/') || trimmed.contains('\\') {
         return Ok(trimmed.to_string());
     }
-    // 忽略大小写地去掉 .md 后缀，得到用于匹配的 stem
-    let stem = if trimmed.len() >= 3 && trimmed[trimmed.len() - 3..].eq_ignore_ascii_case(".md") {
-        &trimmed[..trimmed.len() - 3]
+    // 忽略大小写地去掉 .md 后缀，得到用于匹配的 stem。
+    // 先确认 n-3 落在字符边界上：--file 以多字节字符结尾（如 "😀" 4 字节）时直接按
+    // 字节切会 panic，所以加 is_char_boundary 守卫。
+    let n = trimmed.len();
+    let stem = if n >= 3
+        && trimmed.is_char_boundary(n - 3)
+        && trimmed.as_bytes()[n - 3..].eq_ignore_ascii_case(b".md")
+    {
+        &trimmed[..n - 3]
     } else {
         trimmed
     };
@@ -867,7 +873,7 @@ fn resolve_target_inner(index: &crate::index::Index, raw: &str) -> Result<String
 
     match hits.len() {
         0 => {
-            if is_date_stem(stem) {
+            if crate::index::is_iso_date(stem) {
                 // 日期短名按目录模型展开，即使当天文件还没建也能定位
                 Ok(format!("{}/{}/{}.md", &stem[..4], &stem[5..7], stem))
             } else {
@@ -885,17 +891,6 @@ fn resolve_target_inner(index: &crate::index::Index, raw: &str) -> Result<String
             ))
         }
     }
-}
-
-/// stem 是否为 `YYYY-MM-DD`（纯 ASCII，可直接按字节切片）。
-fn is_date_stem(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.len() == 10
-        && b[4] == b'-'
-        && b[7] == b'-'
-        && b.iter()
-            .enumerate()
-            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
 }
 
 /// 标题归一化：接受 `## 待办` 完整标题行，也接受 `待办` 纯标题名。
@@ -1010,10 +1005,13 @@ async fn append_impl(
     let content = if exists {
         std::fs::read_to_string(&abs).map_err(ApiError::internal)?
     } else if is_diary_target {
+        // 日记模板的标题/日期用目标文件自身日期，而不是 today：--file 2025-01-01 这类
+        // 过去日期的新建日记若用 today 会写成今天的标题/日期戳，造成内容与路径不符。
+        let doc_date = diary_date_from_path(&rel).unwrap_or_else(|| today.clone());
         render_template(
             DAILY_TEMPLATE,
-            &today,
-            &today,
+            &doc_date,
+            &doc_date,
             &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
         )
     } else {
@@ -1985,7 +1983,7 @@ mod sync_tests {
 
 #[cfg(test)]
 mod target_tests {
-    use super::{is_date_stem, resolve_target_inner};
+    use super::resolve_target_inner;
     use crate::index::{FileEntry, Index};
 
     fn idx(paths: &[&str]) -> Index {
@@ -2044,11 +2042,12 @@ mod target_tests {
     }
 
     #[test]
-    fn is_date_stem_checks_shape() {
-        assert!(is_date_stem("2026-11-09"));
-        assert!(!is_date_stem("2026-1-9"));
-        assert!(!is_date_stem("读书笔记"));
-        assert!(!is_date_stem("2026/11/09"));
+    fn multibyte_suffix_does_not_panic() {
+        // 以 4 字节字符结尾时，去 .md 后缀不能按字节硬切（曾会 panic）
+        assert_eq!(ok("😀", &[]), "😀.md");
+        assert_eq!(ok("a😀", &[]), "a😀.md");
+        // 多字节 + 大写后缀仍能正确去后缀并命中
+        assert_eq!(ok("a😀.MD", &["raw/a😀.md"]), "raw/a😀.md");
     }
 }
 
