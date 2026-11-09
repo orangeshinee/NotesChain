@@ -42,9 +42,12 @@ pub enum Command {
         /// 追加一条日程（给了它就不是查询）
         #[arg(long, value_name = "TEXT")]
         add: Option<String>,
-        /// 目标文件，相对笔记根；缺省今日日记
+        /// 目标文件：可只写文件名（如 2026-11-09 / 读书笔记），重名会提示；缺省今日日记
         #[arg(long, value_name = "PATH")]
         file: Option<String>,
+        /// 显式指向今日日记（与 --file 互斥）
+        #[arg(long, conflicts_with = "file")]
+        today: bool,
         /// 目标标题；缺省 ## 日程（兼容 ## 今日日程）
         #[arg(long, value_name = "HEADING")]
         section: Option<String>,
@@ -76,9 +79,12 @@ pub enum TodoCmd {
     Add {
         /// 待办文本（行内 #标签/子标签、!p0–!p9 由服务端解析）
         text: String,
-        /// 目标文件，相对笔记根；缺省今日日记
+        /// 目标文件：可只写文件名（如 2026-11-09 / 读书笔记），重名会提示；缺省今日日记
         #[arg(long, value_name = "PATH")]
         file: Option<String>,
+        /// 显式指向今日日记（与 --file 互斥）
+        #[arg(long, conflicts_with = "file")]
+        today: bool,
         /// 目标标题；缺省 ## 待办
         #[arg(long, value_name = "HEADING")]
         section: Option<String>,
@@ -111,9 +117,12 @@ pub enum NoteCmd {
     Add {
         /// 文本（单行）
         text: String,
-        /// 目标文件，相对笔记根；缺省今日日记
+        /// 目标文件：可只写文件名（如 2026-11-09 / 读书笔记），重名会提示；缺省今日日记
         #[arg(long, value_name = "PATH")]
         file: Option<String>,
+        /// 显式指向今日日记（与 --file 互斥）
+        #[arg(long, conflicts_with = "file")]
+        today: bool,
         /// 目标标题；不传则追加到文件尾（旧行为）
         #[arg(long, value_name = "HEADING")]
         section: Option<String>,
@@ -185,22 +194,25 @@ fn run_inner(
     match command {
         Command::Today => cmd_today(&client),
         Command::Todo { cmd } => match cmd {
-            TodoCmd::Add { text, file, section, create, unique, dry_run } => cmd_todo_add(
-                &client, &text, file.as_deref(), section.as_deref(), create, unique, dry_run,
+            TodoCmd::Add { text, file, today, section, create, unique, dry_run } => cmd_todo_add(
+                &client,
+                AppendArgs { text: &text, file: file.as_deref(), today, section: section.as_deref(), create, unique, dry_run },
             ),
             TodoCmd::List { tag } => cmd_todo_list(&client, tag.as_deref()),
             TodoCmd::Done { number } => cmd_todo_done(&client, number),
         },
         Command::Search { query } => cmd_search(&client, &query),
-        Command::Schedule { range, add, file, section, create, unique, dry_run } => match add {
+        Command::Schedule { range, add, file, today, section, create, unique, dry_run } => match add {
             Some(text) => cmd_schedule_add(
-                &client, &text, file.as_deref(), section.as_deref(), create, unique, dry_run,
+                &client,
+                AppendArgs { text: &text, file: file.as_deref(), today, section: section.as_deref(), create, unique, dry_run },
             ),
             None => cmd_schedule(&client, range.as_deref().unwrap_or("today")),
         },
         Command::Note { cmd } => match cmd {
-            NoteCmd::Add { text, file, section, create, unique, dry_run } => cmd_note_add(
-                &client, &text, file.as_deref(), section.as_deref(), create, unique, dry_run,
+            NoteCmd::Add { text, file, today, section, create, unique, dry_run } => cmd_note_add(
+                &client,
+                AppendArgs { text: &text, file: file.as_deref(), today, section: section.as_deref(), create, unique, dry_run },
             ),
         },
         Command::Git { cmd } => match cmd {
@@ -445,29 +457,43 @@ fn cmd_today(client: &Client) -> Result<(), CliFail> {
     Ok(())
 }
 
-fn append_body(
-    text: &str,
-    file: Option<&str>,
-    section: Option<&str>,
+/// 三个 append 子命令共用的参数（收进结构体，避免函数参数过多）。
+struct AppendArgs<'a> {
+    text: &'a str,
+    file: Option<&'a str>,
+    today: bool,
+    section: Option<&'a str>,
     create: bool,
     unique: bool,
     dry_run: bool,
-) -> Value {
-    let mut body = serde_json::json!({
-        "text": text,
-        "unique": unique,
-        "dry_run": dry_run,
-    });
-    if create {
-        body["create"] = serde_json::json!(true);
+}
+
+impl AppendArgs<'_> {
+    fn body(&self) -> Value {
+        let mut body = serde_json::json!({
+            "text": self.text,
+            "unique": self.unique,
+            "dry_run": self.dry_run,
+        });
+        if self.create {
+            body["create"] = serde_json::json!(true);
+        }
+        if self.today {
+            body["today"] = serde_json::json!(true);
+        }
+        if let Some(f) = self.file {
+            body["path"] = serde_json::json!(f);
+        }
+        if let Some(s) = self.section {
+            body["section"] = serde_json::json!(s);
+        }
+        body
     }
-    if let Some(f) = file {
-        body["path"] = serde_json::json!(f);
+
+    fn post(&self, client: &Client, path: &str) -> Result<(), CliFail> {
+        let raw = client.request("POST", path, &[], Some(&self.body()))?;
+        print_append_result(client, &raw)
     }
-    if let Some(s) = section {
-        body["section"] = serde_json::json!(s);
-    }
-    body
 }
 
 fn print_append_result(client: &Client, raw: &str) -> Result<(), CliFail> {
@@ -489,40 +515,12 @@ fn print_append_result(client: &Client, raw: &str) -> Result<(), CliFail> {
     Ok(())
 }
 
-fn cmd_todo_add(
-    client: &Client,
-    text: &str,
-    file: Option<&str>,
-    section: Option<&str>,
-    create: bool,
-    unique: bool,
-    dry_run: bool,
-) -> Result<(), CliFail> {
-    let raw = client.request(
-        "POST",
-        "/api/todos/append",
-        &[],
-        Some(&append_body(text, file, section, create, unique, dry_run)),
-    )?;
-    print_append_result(client, &raw)
+fn cmd_todo_add(client: &Client, a: AppendArgs<'_>) -> Result<(), CliFail> {
+    a.post(client, "/api/todos/append")
 }
 
-fn cmd_schedule_add(
-    client: &Client,
-    text: &str,
-    file: Option<&str>,
-    section: Option<&str>,
-    create: bool,
-    unique: bool,
-    dry_run: bool,
-) -> Result<(), CliFail> {
-    let raw = client.request(
-        "POST",
-        "/api/schedule/append",
-        &[],
-        Some(&append_body(text, file, section, create, unique, dry_run)),
-    )?;
-    print_append_result(client, &raw)
+fn cmd_schedule_add(client: &Client, a: AppendArgs<'_>) -> Result<(), CliFail> {
+    a.post(client, "/api/schedule/append")
 }
 
 fn cmd_todo_list(client: &Client, tag: Option<&str>) -> Result<(), CliFail> {
@@ -677,22 +675,8 @@ fn cmd_schedule(client: &Client, range: &str) -> Result<(), CliFail> {
     Ok(())
 }
 
-fn cmd_note_add(
-    client: &Client,
-    text: &str,
-    file: Option<&str>,
-    section: Option<&str>,
-    create: bool,
-    unique: bool,
-    dry_run: bool,
-) -> Result<(), CliFail> {
-    let raw = client.request(
-        "POST",
-        "/api/notes/append",
-        &[],
-        Some(&append_body(text, file, section, create, unique, dry_run)),
-    )?;
-    print_append_result(client, &raw)
+fn cmd_note_add(client: &Client, a: AppendArgs<'_>) -> Result<(), CliFail> {
+    a.post(client, "/api/notes/append")
 }
 
 fn cmd_git_status(client: &Client) -> Result<(), CliFail> {

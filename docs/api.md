@@ -203,11 +203,13 @@ Query：`tag`（含子标签）、`status`（`open` | `done` | `all`，默认 `o
 追加一条 `- [ ] …`。请求体：
 
 ```json
-{ "text": "买牛奶 #生活", "path": "2026/11/2026-11-09.md", "section": "## 待办",
-  "create": null, "unique": false, "dry_run": false }
+{ "text": "买牛奶 #生活", "path": "2026-11-09", "section": "## 待办",
+  "today": false, "create": null, "unique": false, "dry_run": false }
 ```
 
-- `path`：缺省今日日记；`section`：缺省 `## 待办`，接受完整标题行或纯标题名，段不存在自动新建。
+- `path`：缺省今日日记。可只写**文件名**（如 `2026-11-09`、`周报`），服务端按索引按文件名（大小写不敏感、自动忽略 `.md`）解析：唯一命中自动展开成完整路径；多个命中返回 `400 bad_request` 并列出全部候选路径，不静默选第一个；零命中时日期形 `YYYY-MM-DD` 按 `YYYY/MM/YYYY-MM-DD.md` 展开、其余补 `.md` 走原有新建逻辑。含 `/` 的完整路径原样透传，旧调用方不受影响。
+- `today`：显式指向今日日记，与 `path`/`target` 互斥（同时给返回 `400 bad_request`）。
+- `section`：缺省 `## 待办`，接受完整标题行或纯标题名，段不存在自动新建。
 - `create`：不传时沿用旧行为（文件不存在按模板新建）；显式 `false` 返回 `404 not_found`。
 - `unique`：目标段内已有完全相同行时返回 `action: "skipped"`，不写盘。
 - `dry_run`：只返回将要插入的位置，零写入。

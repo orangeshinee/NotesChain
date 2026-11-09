@@ -145,6 +145,21 @@ try {
   Remove-Item -LiteralPath (Join-Path $notes $relWin) -Force
   $daily = Invoke-RestMethod -Uri "$base/api/daily" -Method Post -WebSession $session
   Check "按模板新建当天文件" ($daily.created -eq $true -and $daily.content -match '## 日程' -and $daily.content -match '## 待办')
+
+  "10. 短名解析 / --today"
+  # 短名唯一命中：只写文件名，应展开成索引里的完整路径
+  $short = Invoke-RestMethod -Uri "$base/api/todos/append" -Method Post -WebSession $session -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes((@{ text = '短名解析用例'; path = $dateStr; dry_run = $true } | ConvertTo-Json)))
+  Check "短名唯一命中自动展开" ($short.path -eq $relPosix -and $short.action -eq 'dry_run')
+  # --today 与 --file 互斥
+  $mutex = Invoke-WebRequest -Uri "$base/api/todos/append" -Method Post -WebSession $session -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes((@{ text = 'x'; today = $true; path = $relPosix } | ConvertTo-Json))) -SkipHttpErrorCheck
+  Check "--today 与 path 互斥返回 400" ($mutex.StatusCode -eq 400)
+  # 重名短名：造两份同名文件，应拒绝并列出候选
+  New-Item -ItemType Directory -Force -Path (Join-Path $notes 'raw\sub') | Out-Null
+  Set-Content -LiteralPath (Join-Path $notes 'raw\冲突.md') -Value "# A`n" -Encoding utf8
+  Set-Content -LiteralPath (Join-Path $notes 'raw\sub\冲突.md') -Value "# B`n" -Encoding utf8
+  $dup = Invoke-WebRequest -Uri "$base/api/index/rebuild" -Method Post -WebSession $session -SkipHttpErrorCheck
+  $dup = Invoke-WebRequest -Uri "$base/api/todos/append" -Method Post -WebSession $session -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes((@{ text = 'x'; path = '冲突' } | ConvertTo-Json))) -SkipHttpErrorCheck
+  Check "重名短名拒绝写入" ($dup.StatusCode -eq 400 -and $dup.Content -match '对应多个文件')
 }
 finally {
   Get-Process -Id $proc.Id -ErrorAction SilentlyContinue | Stop-Process -Force

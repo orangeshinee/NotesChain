@@ -34,7 +34,7 @@ Record "cargo clippy" ($clippyCode -eq 0 -and $warnCount -eq 0 -and $errCount -e
 
 "=== 3. 接口冒烟 ==="
 & pwsh -NoProfile -File (Join-Path $PSScriptRoot "smoke.ps1") *> $null
-Record "接口冒烟（18 项）" ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+Record "接口冒烟" ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
 
 "=== 4. 边界场景 ==="
 & pwsh -NoProfile -File (Join-Path $PSScriptRoot "edge-check.ps1") *> $null

@@ -790,6 +790,9 @@ struct AppendRequest {
     /// notes/append 的旧字段名，等价于 path
     #[serde(default)]
     target: Option<String>,
+    /// 显式指向今日日记（与 path/target 互斥）
+    #[serde(default)]
+    today: bool,
     /// 目标标题；todo/schedule 有缺省，note 不传则为文件尾追加
     #[serde(default)]
     section: Option<String>,
@@ -813,6 +816,86 @@ impl AppendRequest {
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| format!("{}/{}/{}.md", &today[..4], &today[5..7], today))
     }
+
+    /// 是否显式给了 --file / target（用于与 --today 的互斥校验）。
+    fn has_file(&self) -> bool {
+        self.path
+            .as_deref()
+            .or(self.target.as_deref())
+            .map(|p| !p.trim().is_empty())
+            .unwrap_or(false)
+    }
+}
+
+/// `--file` 短名解析：只写文件名，不写一堆前缀目录。
+///
+/// - 含 `/`（完整路径）：原样透传，旧调用方零影响。
+/// - 短名：按文件名 stem 在索引里找（大小写不敏感、自动忽略 `.md` 后缀）
+///   - 唯一命中 → 展开成索引里的完整路径
+///   - 多个命中 → 报错并列出全部候选，不静默取第一个（与 PRD 3.5.4 同名冲突口径一致）
+///   - 零命中 → 日期形 `YYYY-MM-DD` 映射到规范日记路径；其余自动补 `.md` 走旧 create 逻辑
+fn resolve_target(index: &crate::index::Index, raw: &str) -> Result<String, ApiError> {
+    resolve_target_inner(index, raw).map_err(|msg| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", msg))
+}
+
+/// 纯函数部分：短名 → 完整路径（或错误文案），便于单测。
+fn resolve_target_inner(index: &crate::index::Index, raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    // 完整路径（含分隔符）保持旧行为，不做短名匹配
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return Ok(trimmed.to_string());
+    }
+    // 忽略大小写地去掉 .md 后缀，得到用于匹配的 stem
+    let stem = if trimmed.len() >= 3 && trimmed[trimmed.len() - 3..].eq_ignore_ascii_case(".md") {
+        &trimmed[..trimmed.len() - 3]
+    } else {
+        trimmed
+    };
+    let stem_lc = stem.to_lowercase();
+
+    let hits: Vec<String> = index
+        .files
+        .iter()
+        .filter(|f| f.path.ends_with(".md"))
+        .filter(|f| {
+            let name = f.path.rsplit('/').next().unwrap_or("");
+            let name_stem = name.strip_suffix(".md").unwrap_or(name);
+            name_stem.to_lowercase() == stem_lc
+        })
+        .map(|f| f.path.clone())
+        .collect();
+
+    match hits.len() {
+        0 => {
+            if is_date_stem(stem) {
+                // 日期短名按目录模型展开，即使当天文件还没建也能定位
+                Ok(format!("{}/{}/{}.md", &stem[..4], &stem[5..7], stem))
+            } else {
+                // 旧行为：补 .md 后按 notes 根相对路径处理，交给 create 逻辑
+                Ok(format!("{stem}.md"))
+            }
+        }
+        1 => Ok(hits[0].clone()),
+        _ => {
+            let mut sorted = hits.clone();
+            sorted.sort();
+            Err(format!(
+                "文件名「{stem}」对应多个文件，请改用完整路径：{}",
+                sorted.join("、")
+            ))
+        }
+    }
+}
+
+/// stem 是否为 `YYYY-MM-DD`（纯 ASCII，可直接按字节切片）。
+fn is_date_stem(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
 }
 
 /// 标题归一化：接受 `## 待办` 完整标题行，也接受 `待办` 纯标题名。
@@ -891,7 +974,22 @@ async fn append_impl(
 
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let default_rel = format!("{}/{}/{}.md", &today[..4], &today[5..7], today);
-    let rel = body.rel(&today);
+    if body.today && body.has_file() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "--today 与 --file 不能同时使用",
+        ));
+    }
+    let rel = if body.today {
+        default_rel.clone()
+    } else if body.has_file() {
+        let raw = body.rel(&today);
+        let index = st.index.read().await;
+        resolve_target(&index, &raw)?
+    } else {
+        default_rel.clone()
+    };
     ensure_markdown(&rel, "追加")?;
 
     let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
@@ -1882,6 +1980,75 @@ mod sync_tests {
         assert_eq!(detect_sync_drive(Path::new("C:/Users/x/OneDrive/notes")), Some("OneDrive"));
         assert_eq!(detect_sync_drive(Path::new("D:/坚果云/notes")), Some("坚果云"));
         assert_eq!(detect_sync_drive(Path::new("D:/notes")), None);
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::{is_date_stem, resolve_target_inner};
+    use crate::index::{FileEntry, Index};
+
+    fn idx(paths: &[&str]) -> Index {
+        Index {
+            files: paths
+                .iter()
+                .map(|p| FileEntry {
+                    path: (*p).to_string(),
+                    mtime_ms: 0,
+                    size: 0,
+                    version: String::new(),
+                    diary_date: None,
+                    content: String::new(),
+                    todos: vec![],
+                    tags: vec![],
+                })
+                .collect(),
+            warnings: vec![],
+        }
+    }
+
+    fn ok(raw: &str, paths: &[&str]) -> String {
+        resolve_target_inner(&idx(paths), raw).unwrap()
+    }
+
+    #[test]
+    fn full_path_is_untouched() {
+        assert_eq!(ok("raw/读书笔记.md", &["raw/读书笔记.md"]), "raw/读书笔记.md");
+        assert_eq!(ok("2026/11/2026-11-09.md", &[]), "2026/11/2026-11-09.md");
+    }
+
+    #[test]
+    fn unique_short_name_expands() {
+        assert_eq!(ok("2026-11-09", &["2026/11/2026-11-09.md"]), "2026/11/2026-11-09.md");
+        assert_eq!(ok("读书笔记", &["raw/读书笔记.md"]), "raw/读书笔记.md");
+        assert_eq!(ok("读书笔记.md", &["raw/读书笔记.md"]), "raw/读书笔记.md");
+        assert_eq!(ok("README", &["raw/README.md"]), "raw/README.md");
+    }
+
+    #[test]
+    fn duplicate_short_name_is_rejected_with_candidates() {
+        let err = resolve_target_inner(&idx(&["raw/A.md", "raw/sub/A.md"]), "A").unwrap_err();
+        assert!(err.contains("对应多个文件"));
+        assert!(err.contains("raw/A.md"));
+        assert!(err.contains("raw/sub/A.md"));
+    }
+
+    #[test]
+    fn zero_hit_date_maps_to_diary_path() {
+        assert_eq!(ok("2026-11-09", &[]), "2026/11/2026-11-09.md");
+    }
+
+    #[test]
+    fn zero_hit_plain_name_gets_md_suffix() {
+        assert_eq!(ok("新笔记", &[]), "新笔记.md");
+    }
+
+    #[test]
+    fn is_date_stem_checks_shape() {
+        assert!(is_date_stem("2026-11-09"));
+        assert!(!is_date_stem("2026-1-9"));
+        assert!(!is_date_stem("读书笔记"));
+        assert!(!is_date_stem("2026/11/09"));
     }
 }
 
