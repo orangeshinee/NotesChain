@@ -117,7 +117,13 @@ try {
   $file = Join-Path $notes $relWin
   $text = Get-Content $file -Raw
   Set-Content -Path $file -Value ($text.Replace("## 待办`n", "## 待办`n`n外部插入的一行`n")) -NoNewline -Encoding utf8
-  $target = (Invoke-RestMethod -Uri "$base/api/todos" -WebSession $session).items | Where-Object { $_.text -match '发供应链周报' }
+  # 外部改文件后索引由 watcher 异步重建，立即取列表偶尔会与重建抢跑而取空；轮询短暂等待。
+  $target = $null
+  $targetDeadline = (Get-Date).AddSeconds(3)
+  while (-not $target -and (Get-Date) -lt $targetDeadline) {
+    $target = (Invoke-RestMethod -Uri "$base/api/todos" -WebSession $session).items | Where-Object { $_.text -match '发供应链周报' }
+    if (-not $target) { Start-Sleep -Milliseconds 150 }
+  }
   $body = @{ path = $target.path; line = $target.line; raw_line = $target.raw_line; done = $true } | ConvertTo-Json
   $patched = Invoke-RestMethod -Uri "$base/api/todos" -Method Patch -WebSession $session -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($body))
   $after = Get-Content $file -Raw
