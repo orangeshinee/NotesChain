@@ -20,6 +20,15 @@
 
 > 端口提示：本机 8080 常被 Steam 的远程调试端口占用，所以默认改成了 8090。
 
+## 定向写入 CLI
+
+服务运行时另开终端执行 `noteschain add todo|schedule|line --text ...`，参数见根目录 `README.md`。要点：
+
+- CLI 走 HTTP 调本机 server，**server 必须先起来**；找不到实例时报错退出，不自动拉起、不自动重试。
+- 实例登记表在用户级目录（`$XDG_RUNTIME_DIR/noteschain/instances.json` 或 `%LOCALAPPDATA%\NotesChain\instances.json`），权限 600。**token 绝不写进笔记目录**（默认 `.gitignore` 不含 `.noteschain/`，会被自动提交收走）。
+- CLI 显式传 `create: false`：文件不存在即拒绝。旧前端不传该字段，服务端仍按模板自动新建，保持零改动。
+- 写入链路：`resolve()` → 按文件锁 → `create_dir_all`（仅新建时）→ `atomic_write` → `index.upsert` + `git.notify()` + `revision.fetch_add`。
+
 ## 提交
 
 - 一个改动一个提交；提交信息注明对应 issue 编号（`#16`）或 PRD 章节
@@ -47,3 +56,4 @@
 | 新增/修复反馈 | `docs/issues-v0.2.md` 追加一行，标 ✅ |
 | 架构/约定变化 | `docs/agents/*.md` 对应文件 |
 | 状态变化 | `docs/handover.md`（只记状态、未完成、性能） |
+| 新增/改 CLI 命令或接口字段 | `README.md` + `docs/api.md` |

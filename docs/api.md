@@ -74,6 +74,7 @@ http://127.0.0.1:8090
 | GET | `/api/templates` | 列出模板 |
 | GET | `/api/schedule` | 日程视图（today/week/month） |
 | POST | `/api/schedule/append` | 快速新增日程 |
+| POST | `/api/lines/append` | 通用追加一行到指定标题 |
 | GET | `/api/config` | 运行配置 / 提示信息 |
 | GET | `/api/revision` | 索引修订号（前端轮询） |
 | POST | `/api/index/rebuild` | 重建内存索引 |
@@ -198,15 +199,19 @@ Query：`tag`（含子标签）、`status`（`open` | `done` | `all`，默认 `o
 
 ### POST /api/todos/append
 
-快速新增一条 `- [ ] …` 到 `## 待办` 段。
-
-请求体：
+追加一条 `- [ ] …`。请求体（除 `text` 外均可选）：
 
 ```json
-{ "text": "买牛奶 #生活", "path": "可选，默认今天的日记" }
+{ "text": "买牛奶 #生活", "path": "2026/11/2026-11-09.md", "section": "## 待办",
+  "create": null, "unique": false, "dry_run": false }
 ```
 
-成功：`{ "path": "...", "line": 18, "version": "..." }`
+- `path`：缺省今天的日记；`section`：缺省 `## 待办`，接受 `## 待办` 或 `待办`。
+- `create`：不传时沿用旧行为（文件不存在按模板新建）；**显式 `false` 时返回 `404 not_found`**，CLI 默认传 `false`。
+- `unique`：目标段内已有完全相同行时返回 `action: "skipped"`，不写盘。
+- `dry_run`：只返回将要插入的位置，零写入。
+
+成功：`{ "ok": true, "action": "inserted|skipped|dry_run", "path": "...", "section": "...", "line": 18, "text": "- [ ] 买牛奶 #生活", "version": "..." }`
 
 ---
 
@@ -305,9 +310,22 @@ Query：`range` = `today` | `week`(默认) | `month`。
 
 ### POST /api/schedule/append
 
-请求体 `{ "text": "15:00-16:00 周会 @会议室" }`，写入今天日记的 `## 日程`（兼容 `## 今日日程`）。
+追加一条 `- HH:mm …`。请求体字段同 `POST /api/todos/append`：`text` / `path` / `section` / `create` / `unique` / `dry_run`。
 
-成功：`{ "path": "...", "line": 6, "version": "..." }`
+- `path` 缺省今天的日记；`section` 缺省走候选列表 `["## 日程", "## 今日日程"]`，兼容模板改名前的老笔记。
+- `section` 只允许这两个标题，传别的返回 `400 bad_request`：日程解析器只认这两个段，写到别处会静默不可见。
+
+成功体同 `POST /api/todos/append`。
+
+### POST /api/lines/append
+
+通用追加：把一行原文写到指定文件的指定标题下，不补任何前缀。
+
+```json
+{ "text": "和财务确认口径", "path": "raw/周报.md", "section": "## 记录" }
+```
+
+`section` **必填**（不传返回 `400 bad_request`）；其余字段与上面两个接口一致。段不存在时自动新建该段。
 
 ---
 

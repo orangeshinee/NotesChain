@@ -22,6 +22,7 @@ NotesChain 是**单文件 Rust（Axum）后端 + 原生 JS 前端**的本地 Mar
 - 安全：启动 token + Cookie；新增 `--no-token`（本地免鉴权，默认仍校验）
 - 其他：文件树（默认折叠、打开定位）、新建笔记（模板/frontmatter/日期选择器）、双链 + 反向链接 + 出链、宽屏模式、单文件 3.6 MB
 - 文档：新增 [docs/api.md](api.md) 全量接口文档
+- CLI：`noteschain add todo|schedule|line` 定向写入（指定文件 + 指定标题），用户级实例登记表，退出码 / `--json` / `--dry-run` / `--unique` / `--create`；公共写入模块 `src/write.rs` 保持 CRLF 与 BOM、避开代码块内标题
 
 ## 未完成 / 已知限制
 

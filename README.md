@@ -45,6 +45,32 @@ MyNotes/
 - Git：自动 init、防抖提交（默认 5 分钟，可配）、历史/diff（按文件折叠着色）、按文件回滚
 - 安全：启动 token + Cookie、路径穿越防护；`--no-token` 可本地免鉴权
 
+## 定向写入 CLI
+
+服务运行时，另开一个终端即可往指定文件的指定标题下追加一行：
+
+```bash
+noteschain add todo     --text "买牛奶 #生活"
+noteschain add schedule --text "15:00-16:00 周会 @会议室" --file 2026/11/2026-11-09.md
+noteschain add line     --file raw/周报.md --section "## 记录" --text "和财务确认口径"
+noteschain add todo     --text "发周报" --dry-run --json
+```
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--text` | 必填 | 单行内容；todo 自动补 `- [ ] `，schedule 自动补 `- `，line 原样 |
+| `--file` | 今天的日记 | 相对 notes 根；**不存在时默认拒绝**，`--create` 才新建 |
+| `--section` | todo = `## 待办`；schedule = `## 日程` / `## 今日日程`；line 必填 | 接受完整标题行或纯标题名（自动补 `## `）。日程限这两个标题，写进别的段不会出现在日程视图 |
+| `--dir` / `--port` | 从实例登记表推断 | 多实例时消歧 |
+| `--create` | 关 | 允许新建；日记路径用日记模板，其余用普通笔记模板 |
+| `--unique` | 关 | 段内已有完全相同行时跳过 |
+| `--dry-run` | 关 | 只预览，零写入 |
+| `--json` | 关 | 输出 `{ok, action, path, section, line, version, text}`，供脚本 / cron 解析 |
+
+`action` 为 `inserted` | `skipped` | `dry_run`。退出码：`0` 成功、`2` 参数错误、`3` 文件不存在（未带 `--create`）、`4` 定位或鉴权失败、`5` 写入冲突。
+
+服务启动时会在**用户级目录**登记 `{root, port, token, pid}`：Linux/macOS 为 `$XDG_RUNTIME_DIR/noteschain/instances.json`（回退 `~/.cache/noteschain/`），Windows 为 `%LOCALAPPDATA%\NotesChain\instances.json`，权限 600。**token 不写入笔记目录**，否则会被 Git 自动提交收进版本历史。CLI 从登记表取 port 与 token，不自动拉起 server、不自动重试。多个实例时用 `--dir` / `--port` 指定。
+
 ## 验证
 
 ```powershell

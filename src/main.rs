@@ -1,15 +1,18 @@
 //! NotesChain —— 极度轻量、本地优先的 Markdown 笔记工具。
 //!
 //! 竖切版本（v0.1）：扫描 → 待办提取 → 首页勾选 → 三级定位回写。
+//! v0.2：定向写入 CLI（`noteschain add todo|schedule|line`）。
 
 mod api;
+mod cli;
 mod git;
 mod index;
 mod markdown;
 mod schedule;
 mod state;
-mod watch;
 mod todo_write;
+mod watch;
+mod write;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -19,9 +22,9 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(name = "noteschain", version, about = "极度轻量、本地优先的 Markdown 笔记工具")]
 struct Args {
-    /// 笔记根目录
+    /// 笔记根目录（启动服务时必填）
     #[arg(long, value_name = "DIR")]
-    dir: PathBuf,
+    dir: Option<PathBuf>,
 
     /// 监听端口（只绑 127.0.0.1）
     #[arg(long, default_value_t = 8090)]
@@ -46,13 +49,24 @@ struct Args {
     /// 连续编辑时强制提交间隔（秒），默认 1800（30 分钟）
     #[arg(long, default_value_t = 1800)]
     commit_force: u64,
+
+    /// 定向写入子命令；给出时不启动服务，执行完即退出
+    #[command(subcommand)]
+    command: Option<cli::Commands>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    if let Some(command) = args.command {
+        std::process::exit(cli::run(command));
+    }
+
+    let dir = args
+        .dir
+        .ok_or_else(|| anyhow::anyhow!("启动服务缺少 --dir（笔记根目录必填）"))?;
     let state = state::AppState::new(
-        args.dir,
+        dir,
         args.links,
         !args.no_git,
         args.no_token,
@@ -74,6 +88,17 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
+    let instance = cli::Instance {
+        root: state.root.to_string_lossy().to_string(),
+        port: args.port,
+        token: state.token.clone(),
+        pid: std::process::id(),
+        started_at: chrono::Local::now()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+    };
+    cli::register(&instance);
+
     println!("NotesChain 已启动");
     println!("  索引：{file_count} 个 Markdown 文件，{todo_count} 条未完成待办");
     if state.token.is_empty() {
@@ -84,6 +109,8 @@ async fn main() -> anyhow::Result<()> {
         println!("  （token 只存在于本次进程，重启后需用新地址重新打开）");
     }
 
-    axum::serve(listener, app).await?;
+    let served = axum::serve(listener, app).await;
+    cli::unregister(&instance);
+    served?;
     Ok(())
 }

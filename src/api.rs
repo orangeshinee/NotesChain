@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 
 use crate::state::AppState;
 use crate::todo_write::{self, LocateError};
+use crate::write;
 
 /// 每日文件骨架的权威副本（PRD 3.1.4），编译期内嵌，不读运行时文件。
 const DAILY_TEMPLATE: &str = include_str!("../docs/templates/daily-note.md");
@@ -61,6 +62,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/notes/new", post(create_note))
         .route("/api/templates", get(list_templates))
         .route("/api/schedule/append", post(append_schedule))
+        .route("/api/lines/append", post(append_line))
         .route("/api/tags", get(list_tags))
         .route("/api/search", get(search))
         .route("/api/schedule", get(schedule_view))
@@ -748,187 +750,191 @@ fn title_or_stem(title: &str, rel: &str) -> String {
         .trim_end_matches(".md")
         .to_string()
 }
-// ---------------------------------------------------------------- 快速添加待办
+// ---------------------------------------------------------------- 定向写入
 
+/// 三个 append 接口共用请求体。
+/// 前端快捷添加只传 `text`，其余字段全部可选，保持旧行为：
+/// 不传 `create` 时文件不存在仍按模板新建。
 #[derive(Deserialize)]
-struct AppendTodoRequest {
+struct AppendRequest {
     text: String,
     /// 不传则写进今天的日记
     #[serde(default)]
     path: Option<String>,
+    /// 不传则用该类型的缺省标题；日程缺省走候选列表兼容老笔记
+    #[serde(default)]
+    section: Option<String>,
+    /// 显式 false 时目标文件不存在即 404（CLI 防呆用）
+    #[serde(default)]
+    create: Option<bool>,
+    /// 目标段内已有完全相同行时跳过
+    #[serde(default)]
+    unique: Option<bool>,
+    /// 只预览不写盘
+    #[serde(default)]
+    dry_run: Option<bool>,
 }
 
-fn insert_into_section_any(content: &str, headings: &[&str], line: &str) -> (String, usize) {
-    for heading in headings {
-        if content.lines().any(|l| l.trim() == *heading) {
-            return insert_into_section(content, heading, line);
-        }
+/// 标题归一化：接受 `## 待办` 完整标题行，也接受 `待办` 纯标题名。
+fn normalize_section(raw: &str) -> Result<String, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "标题为空"));
     }
-    insert_into_section(content, headings[0], line)
-}
-
-fn insert_into_section(content: &str, heading: &str, line: &str) -> (String, usize) {
-    let lines: Vec<&str> = content.lines().collect();
-    // 找 `## 待办` 段
-    let mut heading_idx: Option<usize> = None;
-    for (idx, text) in lines.iter().enumerate() {
-        if text.trim() == heading {
-            heading_idx = Some(idx);
-            break;
-        }
-    }
-
-    match heading_idx {
-        Some(h) => {
-            // 段尾：下一个一级/二级标题之前
-            let mut end = lines.len();
-            for (idx, text) in lines.iter().enumerate().skip(h + 1) {
-                let trimmed = text.trim_start();
-                if trimmed.starts_with('#') {
-                    let level = trimmed.chars().take_while(|c| *c == '#').count();
-                    if level <= 2 {
-                        end = idx;
-                        break;
-                    }
-                }
-            }
-            // 去掉段尾空行
-            let mut insert_at = end;
-            while insert_at > h + 1 && lines[insert_at - 1].trim().is_empty() {
-                insert_at -= 1;
-            }
-            let mut out: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
-            out.insert(insert_at, line.to_string());
-            let mut text = out.join("\n");
-            if content.ends_with('\n') || !content.is_empty() {
-                text.push('\n');
-            }
-            (text, insert_at + 1)
-        }
-        None => {
-            let mut text = content.trim_end().to_string();
-            if !text.is_empty() {
-                text.push_str("\n\n");
-            }
-            text.push_str(&format!("{heading}\n\n"));
-            text.push_str(line);
-            text.push('\n');
-            let count = text.lines().count();
-            (text, count)
-        }
-    }
-}
-
-async fn append_todo(
-    State(st): State<Arc<AppState>>,
-    Json(body): Json<AppendTodoRequest>,
-) -> Result<Json<Value>, ApiError> {
-    let text = body.text.trim();
-    if text.is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "内容为空"));
-    }
-    if text.contains('\n') {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "一次只能添加一条"));
-    }
-    let text = text.trim_start_matches("- [ ]").trim_start_matches("- [x]").trim();
-
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let rel = body
-        .path
-        .clone()
-        .unwrap_or_else(|| format!("{}/{}/{}.md", &today[..4], &today[5..7], today));
-
-    let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
-    let lock_key = st.relative(&abs);
-    let lock = st.lock_for(&lock_key).await;
-    let _guard = lock.lock().await;
-
-    let exists = abs.is_file();
-    let content = if exists {
-        std::fs::read_to_string(&abs).map_err(ApiError::internal)?
+    let out = if trimmed.starts_with('#') {
+        trimmed.to_string()
     } else {
-        render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
+        format!("## {trimmed}")
     };
-
-    let (updated, line_no) = insert_into_section(&content, "## 待办", &format!("- [ ] {text}"));
-    if !exists {
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
-        }
+    let level = out.chars().take_while(|c| *c == '#').count();
+    if level == 0 || level > 6 || out.trim_start_matches('#').trim().is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "标题格式非法"));
     }
-    todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
-    st.index
-        .write()
-        .await
-        .upsert(&st.notes_root, &rel)
-        .map_err(ApiError::internal)?;
-    st.git.notify();
-    st.revision
-        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    Ok(Json(json!({
-        "path": rel,
-        "line": line_no,
-        "version": crate::index::version_of_text(mtime_ms(&abs), &updated),
-    })))
-}
-#[derive(Deserialize)]
-struct AppendScheduleRequest {
-    text: String,
+    Ok(out)
 }
 
-async fn append_schedule(
-    State(st): State<Arc<AppState>>,
-    Json(body): Json<AppendScheduleRequest>,
+fn sections_for(kind: write::Kind, requested: Option<String>) -> Result<Vec<String>, ApiError> {
+    if let Some(raw) = requested {
+        let section = normalize_section(&raw)?;
+        // 日程只认解析器认得的两个标题；写进别的段会静默不可见（PRD 3.3）
+        if kind == write::Kind::Schedule && !write::SCHEDULE_SECTIONS.contains(&section.as_str()) {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "日程标题只能是 ## 日程 或 ## 今日日程",
+            ));
+        }
+        return Ok(vec![section]);
+    }
+    let sections = kind.default_sections();
+    if sections.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "缺少标题（section）",
+        ));
+    }
+    Ok(sections)
+}
+
+async fn append_impl(
+    st: Arc<AppState>,
+    kind: write::Kind,
+    body: AppendRequest,
 ) -> Result<Json<Value>, ApiError> {
     let raw = body.text.trim();
     if raw.is_empty() {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "内容为空"));
     }
-    if raw.contains('\n') {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "一次只能添加一条"));
+    if raw.contains('\n') || raw.contains('\r') {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "一次只能添加一条",
+        ));
     }
-    let line = if raw.starts_with('-') {
-        raw.to_string()
-    } else {
-        format!("- {raw}")
-    };
+    let line = kind.format_line(raw);
+    let sections = sections_for(kind, body.section)?;
 
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let rel = format!("{}/{}/{}.md", &today[..4], &today[5..7], today);
+    let rel = body
+        .path
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| format!("{}/{}/{}.md", &today[..4], &today[5..7], today));
+    if !rel.ends_with(".md") {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "只支持 .md",
+        ));
+    }
+
     let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
     let lock_key = st.relative(&abs);
     let lock = st.lock_for(&lock_key).await;
     let _guard = lock.lock().await;
 
     let exists = abs.is_file();
+    // 旧前端不传 create，沿用「不存在就按模板新建」；CLI 显式传 false 才拒绝
+    if !exists && body.create == Some(false) {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("文件不存在：{rel}（需要 --create 才新建）"),
+        ));
+    }
     let content = if exists {
         std::fs::read_to_string(&abs).map_err(ApiError::internal)?
     } else {
-        render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
+        // 只有日记路径用日记模板，普通笔记用普通模板，避免把日记骨架塞进 raw/*.md
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+        if diary_date_from_path(&rel).is_some() {
+            render_template(DAILY_TEMPLATE, &today, &today, &now)
+        } else {
+            render_template_full(NOTE_TEMPLATE, &title_or_stem("", &rel), &today, &now)
+        }
     };
 
-    let (updated, line_no) = insert_into_section_any(&content, &["## 日程", "## 今日日程"], &line);
+    let outcome = write::insert_line(&content, &sections, &line, body.unique.unwrap_or(false))
+        .map_err(|err| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", err.to_string()))?;
+
+    let mut value = json!({
+        "ok": true,
+        "path": rel.clone(),
+        "section": outcome.section.clone(),
+        "line": outcome.line,
+        "text": line,
+    });
+    if body.dry_run.unwrap_or(false) {
+        value["action"] = json!("dry_run");
+        value["version"] = Value::Null;
+        return Ok(Json(value));
+    }
+    if outcome.skipped {
+        value["action"] = json!("skipped");
+        value["version"] = json!(crate::index::version_of_text(mtime_ms(&abs), &content));
+        return Ok(Json(value));
+    }
+
     if !exists {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
         }
     }
-    todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
+    todo_write::atomic_write(&abs, &outcome.content).map_err(ApiError::internal)?;
     st.index
         .write()
         .await
         .upsert(&st.notes_root, &rel)
         .map_err(ApiError::internal)?;
     st.git.notify();
-    st.revision
-        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-    Ok(Json(json!({
-        "path": rel,
-        "line": line_no,
-        "version": crate::index::version_of_text(mtime_ms(&abs), &updated),
-    })))
+    value["action"] = json!("inserted");
+    value["version"] = json!(crate::index::version_of_text(mtime_ms(&abs), &outcome.content));
+    Ok(Json(value))
+}
+
+async fn append_todo(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<AppendRequest>,
+) -> Result<Json<Value>, ApiError> {
+    append_impl(st, write::Kind::Todo, body).await
+}
+
+async fn append_schedule(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<AppendRequest>,
+) -> Result<Json<Value>, ApiError> {
+    append_impl(st, write::Kind::Schedule, body).await
+}
+
+async fn append_line(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<AppendRequest>,
+) -> Result<Json<Value>, ApiError> {
+    append_impl(st, write::Kind::Line, body).await
 }
 // ---------------------------------------------------------------- 每日文件 / 索引 / git
 
