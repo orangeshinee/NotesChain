@@ -777,6 +777,13 @@ struct AppendRequest {
 
 /// 标题归一化：接受 `## 待办` 完整标题行，也接受 `待办` 纯标题名。
 fn normalize_section(raw: &str) -> Result<String, ApiError> {
+    if raw.contains('\n') || raw.contains('\r') {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "标题不能含换行",
+        ));
+    }
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "标题为空"));
@@ -796,13 +803,24 @@ fn normalize_section(raw: &str) -> Result<String, ApiError> {
 fn sections_for(kind: write::Kind, requested: Option<String>) -> Result<Vec<String>, ApiError> {
     if let Some(raw) = requested {
         let section = normalize_section(&raw)?;
-        // 日程只认解析器认得的两个标题；写进别的段会静默不可见（PRD 3.3）
-        if kind == write::Kind::Schedule && !write::SCHEDULE_SECTIONS.contains(&section.as_str()) {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "bad_request",
-                "日程标题只能是 ## 日程 或 ## 今日日程",
-            ));
+        if kind == write::Kind::Schedule {
+            // 日程只认解析器认得的两个标题；写进别的段会静默不可见（PRD 3.3）
+            if !write::SCHEDULE_SECTIONS.contains(&section.as_str()) {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "bad_request",
+                    "日程标题只能是 ## 日程 或 ## 今日日程",
+                ));
+            }
+            // 显式给了白名单标题时仍按候选列表解析：老笔记可能用另一个别名，
+            // 只认单个标题会在文件末尾再建一个日程段。
+            let mut sections = vec![section.clone()];
+            for candidate in write::SCHEDULE_SECTIONS {
+                if *candidate != section && !sections.iter().any(|s| s == *candidate) {
+                    sections.push((*candidate).to_string());
+                }
+            }
+            return Ok(sections);
         }
         return Ok(vec![section]);
     }

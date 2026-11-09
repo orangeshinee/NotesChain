@@ -67,9 +67,9 @@ noteschain add todo     --text "发周报" --dry-run --json
 | `--dry-run` | 关 | 只预览，零写入 |
 | `--json` | 关 | 输出 `{ok, action, path, section, line, version, text}`，供脚本 / cron 解析 |
 
-`action` 为 `inserted` | `skipped` | `dry_run`。退出码：`0` 成功、`2` 参数错误、`3` 文件不存在（未带 `--create`）、`4` 定位或鉴权失败、`5` 写入冲突。
+`action` 为 `inserted` | `skipped` | `dry_run`。退出码：`0` 成功、`2` 参数错误（含路径越界）、`3` 文件不存在（未带 `--create`）、`4` 定位或鉴权失败、`5` 写入冲突或服务端错误。`--json` 模式下成功结果走 stdout，错误 JSON 走 stderr。
 
-服务启动时会在**用户级目录**登记 `{root, port, token, pid}`：Linux/macOS 为 `$XDG_RUNTIME_DIR/noteschain/instances.json`（回退 `~/.cache/noteschain/`），Windows 为 `%LOCALAPPDATA%\NotesChain\instances.json`，权限 600。**token 不写入笔记目录**，否则会被 Git 自动提交收进版本历史。CLI 从登记表取 port 与 token，不自动拉起 server、不自动重试。多个实例时用 `--dir` / `--port` 指定。
+服务启动时会在**用户级目录**登记 `{root, port, token, pid}`：Linux/macOS 为 `$XDG_RUNTIME_DIR/noteschain/instances.json`（回退 `~/.cache/noteschain/`，HOME 缺失时用系统临时目录），Windows 为 `%LOCALAPPDATA%\NotesChain\instances.json`。Unix 下文件权限 600；Windows 权限由 `%LOCALAPPDATA%` 的 ACL 决定，这是已知限制。**token 不写入笔记目录**，否则会被 Git 自动提交收进版本历史；它仍只属于本次进程，重启即失效。CLI 从登记表取 port 与 token，不自动拉起 server、不自动重试。多个实例时用 `--dir` / `--port` 指定；**同一笔记根不要起多个 server**，两个进程各持独立锁与索引，并发写会丢更新（CLI 会拒绝这种情况）。
 
 ## 验证
 

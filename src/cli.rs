@@ -5,6 +5,7 @@
 //! - CLI 不自动拉起 server，也不自动重试，避免重复落盘。
 //! - 只连 127.0.0.1，无 TLS，不引第三方 HTTP 依赖，守住单文件体积。
 
+use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
@@ -21,6 +22,9 @@ pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_NOT_FOUND: i32 = 3;
 pub const EXIT_LOCATE: i32 = 4;
 pub const EXIT_CONFLICT: i32 = 5;
+
+/// (退出码, 稳定错误码, 可直接展示的中文消息)
+type Failure = (i32, String, String);
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
@@ -87,12 +91,14 @@ pub struct Instance {
 }
 
 /// 用户级固定位置。CLI 从这里读，不需要先知道笔记根目录。
+/// 回退必须用绝对路径：相对 "." 会落在进程 cwd，若 cwd 就是 --dir，
+/// token 就会被 Git 自动提交收进版本历史。
 fn registry_path() -> PathBuf {
     #[cfg(windows)]
     let path = {
         let base = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
+            .unwrap_or_else(std::env::temp_dir);
         base.join("NotesChain").join("instances.json")
     };
     #[cfg(not(windows))]
@@ -102,7 +108,7 @@ fn registry_path() -> PathBuf {
         } else {
             let home = std::env::var_os("HOME")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."));
+                .unwrap_or_else(std::env::temp_dir);
             home.join(".cache").join("noteschain").join("instances.json")
         }
     };
@@ -110,12 +116,24 @@ fn registry_path() -> PathBuf {
 }
 
 fn load_registry() -> Vec<Instance> {
-    let Ok(text) = std::fs::read_to_string(registry_path()) else {
-        return Vec::new();
+    let text = match std::fs::read_to_string(registry_path()) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(err) => {
+            eprintln!("[cli] 读取实例登记表失败: {err}");
+            return Vec::new();
+        }
     };
-    serde_json::from_str(&text).unwrap_or_default()
+    match serde_json::from_str(&text) {
+        Ok(list) => list,
+        Err(err) => {
+            eprintln!("[cli] 实例登记表损坏（{err}），本次按空表处理");
+            Vec::new()
+        }
+    }
 }
 
+/// 原子写：同目录临时文件 + rename，避免 CLI 读到写了一半的登记表。
 fn save_registry(list: &[Instance]) -> Result<(), String> {
     let path = registry_path();
     if let Some(parent) = path.parent() {
@@ -125,13 +143,23 @@ fn save_registry(list: &[Instance]) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
+        let tmp = path.with_file_name(format!(".instances.{}.tmp", std::process::id()));
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create(true).truncate(true).mode(0o600);
-        let mut file = opts.open(&path).map_err(|e| e.to_string())?;
+        let mut file = opts.open(&tmp).map_err(|e| e.to_string())?;
         file.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+        // 覆盖已存在的宽松权限文件（mode() 只对新建生效）
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
     }
     #[cfg(not(unix))]
     {
+        // Windows 上 rename 覆盖已存在文件会失败，退回直接写；
+        // 权限由 %LOCALAPPDATA% 的 ACL 决定，见 README 的限制说明。
         std::fs::write(&path, text).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -139,7 +167,8 @@ fn save_registry(list: &[Instance]) -> Result<(), String> {
 
 pub fn register(instance: &Instance) {
     let mut list = load_registry();
-    list.retain(|i| !(i.root == instance.root && i.port == instance.port));
+    // 同一端口只可能有一个 server，按端口覆盖可清掉崩溃残留与同端口换目录的旧条目
+    list.retain(|i| i.port != instance.port);
     list.push(instance.clone());
     if let Err(err) = save_registry(&list) {
         eprintln!("[cli] 登记实例失败: {err}");
@@ -148,27 +177,39 @@ pub fn register(instance: &Instance) {
 
 pub fn unregister(instance: &Instance) {
     let mut list = load_registry();
-    list.retain(|i| {
-        !(i.root == instance.root && i.port == instance.port && i.pid == instance.pid)
-    });
+    list.retain(|i| !(i.port == instance.port && i.pid == instance.pid));
     if let Err(err) = save_registry(&list) {
         eprintln!("[cli] 注销实例失败: {err}");
     }
 }
 
+/// 端口通 +（Unix）pid 对应的进程还在，才算活实例。
 fn alive(instance: &Instance) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], instance.port));
-    TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+    if TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_err() {
+        return false;
+    }
+    #[cfg(unix)]
+    if instance.pid > 0 && !PathBuf::from(format!("/proc/{}", instance.pid)).exists() {
+        return false;
+    }
+    true
 }
 
-/// 只保留活实例；陈旧条目（server 崩溃残留）不自动清理，靠端口探测过滤。
-fn select(args: &AddArgs) -> Result<Instance, (i32, String)> {
+/// Windows 的 canonicalize 带 `\\?\` 前缀，server 侧已用 simplify 去掉，这里对齐。
+fn normalize_dir(raw: &str) -> String {
+    let canon = std::fs::canonicalize(raw)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| raw.to_string());
+    const PREFIX: &str = r"\\?\";
+    canon.strip_prefix(PREFIX).unwrap_or(&canon).to_string()
+}
+
+fn select(args: &AddArgs) -> Result<Instance, Failure> {
     let mut list: Vec<Instance> = load_registry().into_iter().filter(alive).collect();
     if let Some(dir) = &args.dir {
-        let canon = std::fs::canonicalize(dir)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| dir.clone());
-        list.retain(|i| i.root == canon || i.root == *dir);
+        let canon = normalize_dir(dir);
+        list.retain(|i| normalize_dir(&i.root) == canon || i.root == *dir);
     }
     if let Some(port) = args.port {
         list.retain(|i| i.port == port);
@@ -176,8 +217,19 @@ fn select(args: &AddArgs) -> Result<Instance, (i32, String)> {
     if list.is_empty() {
         return Err((
             EXIT_LOCATE,
+            "locate_failed".into(),
             "找不到运行中的 NotesChain 实例。请先启动服务；多实例时用 --dir / --port 消歧。"
-                .to_string(),
+                .into(),
+        ));
+    }
+    let roots: HashSet<&str> = list.iter().map(|i| i.root.as_str()).collect();
+    if roots.len() < list.len() {
+        // 两个 server 各持独立内存锁与索引，并发写同一文件会丢更新
+        return Err((
+            EXIT_LOCATE,
+            "locate_failed".into(),
+            "有多个实例共用同一笔记根：并发写会丢更新，请只保留一个 server，或用 --dir 指定。"
+                .into(),
         ));
     }
     if list.len() > 1 {
@@ -188,6 +240,7 @@ fn select(args: &AddArgs) -> Result<Instance, (i32, String)> {
             .join(", ");
         return Err((
             EXIT_LOCATE,
+            "locate_failed".into(),
             format!("有多个实例：{desc}。用 --dir 或 --port 指定。"),
         ));
     }
@@ -254,15 +307,22 @@ fn decode_chunked(data: &[u8]) -> Result<Vec<u8>, String> {
         let size_hex = String::from_utf8_lossy(&data[pos..end]);
         let size = usize::from_str_radix(size_hex.split(';').next().unwrap_or("0").trim(), 16)
             .map_err(|e| e.to_string())?;
-        pos = end + 2;
+        pos = end.checked_add(2).ok_or_else(|| "chunked 偏移溢出".to_string())?;
         if size == 0 {
             break;
         }
-        if pos + size > data.len() {
+        // 先做有上限的 checked 运算，避免 release 下整数回绕绕过边界检查
+        let stop = pos
+            .checked_add(size)
+            .ok_or_else(|| "chunked 尺寸溢出".to_string())?;
+        let next = stop
+            .checked_add(2)
+            .ok_or_else(|| "chunked 尺寸溢出".to_string())?;
+        if stop > data.len() || next > data.len() {
             return Err("chunked 数据不完整".to_string());
         }
-        out.extend_from_slice(&data[pos..pos + size]);
-        pos += size + 2;
+        out.extend_from_slice(&data[pos..stop]);
+        pos = next;
     }
     Ok(out)
 }
@@ -287,32 +347,36 @@ fn post_json(port: u16, endpoint: &str, token: &str, body: &Value) -> Result<(u1
 
 // ---------------------------------------------------------------- 执行
 
-fn error_code(exit: i32) -> &'static str {
-    match exit {
-        EXIT_USAGE => "bad_request",
-        EXIT_NOT_FOUND => "not_found",
-        EXIT_LOCATE => "locate_failed",
-        _ => "conflict",
-    }
-}
-
-fn execute(kind: Kind, args: &AddArgs) -> Result<Value, (i32, String)> {
+fn execute(kind: Kind, args: &AddArgs) -> Result<Value, Failure> {
     let text = args.text.trim();
     if text.is_empty() {
-        return Err((EXIT_USAGE, "内容为空（--text 必填）".to_string()));
+        return Err((EXIT_USAGE, "bad_request".into(), "内容为空（--text 必填）".into()));
     }
     if text.contains('\n') || text.contains('\r') {
         return Err((
             EXIT_USAGE,
-            "一次只能添加一条（--text 不能含换行）".to_string(),
+            "bad_request".into(),
+            "一次只能添加一条（--text 不能含换行）".into(),
         ));
     }
     if kind == Kind::Line && args.section.is_none() {
-        return Err((EXIT_USAGE, "add line 需要 --section".to_string()));
+        return Err((EXIT_USAGE, "bad_request".into(), "add line 需要 --section".into()));
+    }
+    if let Some(section) = &args.section {
+        if section.contains('\n') || section.contains('\r') {
+            return Err((
+                EXIT_USAGE,
+                "bad_request".into(),
+                "标题不能含换行".into(),
+            ));
+        }
     }
 
     let instance = select(args)?;
     let token = args.token.clone().unwrap_or_else(|| instance.token.clone());
+    if token.bytes().any(|b| b < 0x20 || b == 0x7f) {
+        return Err((EXIT_USAGE, "bad_request".into(), "token 含非法控制字符".into()));
+    }
     // CLI 一律显式传 create；默认 false 即「文件不存在直接拒绝」。
     // 旧前端不传这个字段，服务端保持自动新建的旧行为。
     let mut body = json!({
@@ -329,17 +393,31 @@ fn execute(kind: Kind, args: &AddArgs) -> Result<Value, (i32, String)> {
     }
 
     let (status, value) = post_json(instance.port, kind.endpoint(), &token, &body)
-        .map_err(|e| (EXIT_LOCATE, format!("请求失败：{e}")))?;
+        .map_err(|e| (EXIT_LOCATE, "locate_failed".into(), format!("请求失败：{e}")))?;
     if !(200..300).contains(&status) {
-        let code = value["error"]["code"].as_str().unwrap_or("unknown");
-        let message = value["error"]["message"].as_str().unwrap_or("请求失败");
-        let exit = match code {
-            "bad_request" => EXIT_USAGE,
+        let code = value["error"]["code"].as_str().unwrap_or("unknown").to_string();
+        let message = value["error"]["message"]
+            .as_str()
+            .unwrap_or("请求失败")
+            .to_string();
+        let exit = match code.as_str() {
+            "bad_request" | "bad_path" => EXIT_USAGE,
             "not_found" => EXIT_NOT_FOUND,
             "unauthorized" => EXIT_LOCATE,
             _ => EXIT_CONFLICT,
         };
-        return Err((exit, format!("{code}: {message}")));
+        return Err((exit, code, message));
+    }
+    // 2xx 但缺少必要字段时不能当成写入成功，否则脚本按退出码会误判
+    if value.get("ok") != Some(&Value::Bool(true))
+        || value.get("action").is_none()
+        || value.get("path").is_none()
+    {
+        return Err((
+            EXIT_CONFLICT,
+            "internal".into(),
+            "服务端响应缺少必要字段，无法确认写入结果".into(),
+        ));
     }
     Ok(value)
 }
@@ -374,12 +452,10 @@ pub fn run(command: Commands) -> i32 {
             print_output(&args, &value);
             EXIT_OK
         }
-        Err((exit, message)) => {
+        Err((exit, code, message)) => {
             if args.json {
-                println!(
-                    "{}",
-                    json!({ "ok": false, "code": error_code(exit), "message": message })
-                );
+                // 错误 JSON 走 stderr，stdout 只留给成功结果（设计文档 §7.3）
+                eprintln!("{}", json!({ "ok": false, "code": code, "message": message }));
             } else {
                 eprintln!("{message}");
             }
@@ -393,9 +469,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_is_outside_notes_root() {
+    fn registry_path_is_absolute_user_level() {
         let path = registry_path();
-        assert!(path.to_string_lossy().contains("instances.json"));
+        assert!(path.is_absolute(), "{}", path.display());
+        assert_eq!(path.file_name().unwrap(), "instances.json");
         assert!(!path.to_string_lossy().contains("/notes/"));
     }
 
@@ -437,6 +514,18 @@ mod tests {
         let (status, value) = parse_response(resp.as_bytes()).unwrap();
         assert_eq!(status, 200);
         assert_eq!(value["ok"], true);
+    }
+
+    #[test]
+    fn chunked_overflow_is_rejected_not_panicking() {
+        let resp = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffff\r\nx\r\n0\r\n\r\n";
+        assert!(parse_response(resp).is_err());
+    }
+
+    #[test]
+    fn normalize_dir_strips_windows_prefix() {
+        let raw = r"\\?\F:\MyNotes";
+        assert_eq!(normalize_dir(raw), r"F:\MyNotes");
     }
 
     #[test]

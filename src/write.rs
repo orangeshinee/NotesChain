@@ -1,7 +1,8 @@
 //! 定向写入的纯函数层：按标题把一行追加到 Markdown 文件的指定段。
 //!
 //! 从 `api.rs` 抽出，HTTP 接口与 CLI 共用。红线（AGENTS.md）：绝不改写已有笔记，
-//! 只允许「追加一行」或「新建文件写模板」。因此这里保留原 eol 与 BOM，不做整篇规范化。
+//! 只允许「追加一行」或「新建文件写模板」。实现上按行保留原始 eol 与 BOM，
+//! 不做整篇规范化，原有行的字节除必要的行尾分隔外一字不改。
 
 use crate::markdown;
 
@@ -82,7 +83,61 @@ pub struct InsertOutcome {
     pub skipped: bool,
 }
 
-/// 把一行插入目标段，返回写回磁盘的完整文本（原 eol / BOM 保留）。
+/// 一行原文 + 它自己的行尾。逐行保留，避免混合 eol 被整篇统一。
+#[derive(Debug, Clone)]
+struct Line {
+    text: String,
+    eol: &'static str,
+}
+
+fn split_lines(raw: &str) -> Vec<Line> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for (idx, byte) in raw.bytes().enumerate() {
+        if byte != b'\n' {
+            continue;
+        }
+        let seg = &raw[start..idx];
+        let (text, eol) = match seg.strip_suffix('\r') {
+            Some(t) => (t, "\r\n"),
+            None => (seg, "\n"),
+        };
+        out.push(Line {
+            text: text.to_string(),
+            eol,
+        });
+        start = idx + 1;
+    }
+    if start < raw.len() {
+        out.push(Line {
+            text: raw[start..].to_string(),
+            eol: "",
+        });
+    }
+    out
+}
+
+fn join_lines(lines: &[Line]) -> String {
+    let mut out = String::new();
+    for line in lines {
+        out.push_str(&line.text);
+        out.push_str(line.eol);
+    }
+    out
+}
+
+/// 新增行沿用文件末尾的行尾风格；空文件用 LF。
+/// 不能用「第一个」行尾：混合行尾文件里那会把新段写成与尾部不一致的风格。
+fn preferred_eol(lines: &[Line]) -> &'static str {
+    lines
+        .iter()
+        .rev()
+        .find(|l| !l.eol.is_empty())
+        .map(|l| l.eol)
+        .unwrap_or("\n")
+}
+
+/// 把一行插入目标段，返回写回磁盘的完整文本（原有行的 eol / BOM / 尾空格保留）。
 pub fn insert_line(
     raw: &str,
     sections: &[String],
@@ -90,34 +145,44 @@ pub fn insert_line(
     unique: bool,
 ) -> Result<InsertOutcome, WriteError> {
     let section = resolve_section(raw, sections)?;
-    // `str::lines()` 会剥掉 CRLF 的 `\r`，join 时按检测出的原 eol 还原，避免整篇改写
-    let eol = if raw.contains("\r\n") { "\r\n" } else { "\n" };
-    let trailing_newline = raw.ends_with('\n');
-    let mut lines: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
-    let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+    let target_level = section.chars().take_while(|c| *c == '#').count().max(1);
+    let mut lines = split_lines(raw);
+    let refs: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
     let flags = markdown::code_block_flags(&refs);
 
     let heading = lines
         .iter()
         .enumerate()
-        .find(|(idx, text)| !flags[*idx] && strip_bom(text).trim() == section)
+        .find(|(idx, l)| !flags[*idx] && strip_bom(&l.text).trim() == section)
         .map(|(idx, _)| idx);
 
     let Some(heading_idx) = heading else {
-        // 段不存在：在文件末尾追加该标题与内容，沿用原 eol
-        let mut text = raw.trim_end().to_string();
-        if !text.is_empty() {
-            text.push_str(eol);
-            text.push_str(eol);
+        // 段不存在：在末尾追加该标题与内容。原文一字不改，只给末行补必要的换行。
+        let eol = preferred_eol(&lines);
+        if let Some(last) = lines.last_mut() {
+            if last.eol.is_empty() {
+                last.eol = eol;
+            }
+            lines.push(Line {
+                text: String::new(),
+                eol,
+            });
         }
-        text.push_str(&section);
-        text.push_str(eol);
-        text.push_str(eol);
-        text.push_str(line);
-        text.push_str(eol);
-        let line_no = text.lines().count();
+        lines.push(Line {
+            text: section.clone(),
+            eol,
+        });
+        lines.push(Line {
+            text: String::new(),
+            eol,
+        });
+        let line_no = lines.len() + 1;
+        lines.push(Line {
+            text: line.to_string(),
+            eol,
+        });
         return Ok(InsertOutcome {
-            content: text,
+            content: join_lines(&lines),
             line: line_no,
             section,
             skipped: false,
@@ -125,11 +190,11 @@ pub fn insert_line(
     };
 
     let start = heading_idx + 1;
-    let end = section_end(&lines, &flags, start);
+    let end = section_end(&lines, &flags, start, target_level);
 
     if unique {
         if let Some(pos) = (start..end)
-            .find(|&idx| !flags[idx] && lines[idx].trim() == line.trim())
+            .find(|&idx| !flags[idx] && lines[idx].text.trim() == line.trim())
         {
             return Ok(InsertOutcome {
                 content: raw.to_string(),
@@ -141,16 +206,27 @@ pub fn insert_line(
     }
 
     let mut insert_at = end;
-    while insert_at > start && lines[insert_at - 1].trim().is_empty() {
+    while insert_at > start && lines[insert_at - 1].text.trim().is_empty() {
         insert_at -= 1;
     }
-    lines.insert(insert_at, line.to_string());
-    let mut content = lines.join(eol);
-    if trailing_newline || !content.is_empty() {
-        content.push_str(eol);
+    let eol = if insert_at > 0 && !lines[insert_at - 1].eol.is_empty() {
+        lines[insert_at - 1].eol
+    } else {
+        preferred_eol(&lines)
+    };
+    // 插在末尾时，原末行若没有换行，补一个分隔符，保证新行独立成行。
+    if insert_at > 0 && lines[insert_at - 1].eol.is_empty() {
+        lines[insert_at - 1].eol = eol;
     }
+    lines.insert(
+        insert_at,
+        Line {
+            text: line.to_string(),
+            eol,
+        },
+    );
     Ok(InsertOutcome {
-        content,
+        content: join_lines(&lines),
         line: insert_at + 1,
         section,
         skipped: false,
@@ -163,13 +239,14 @@ fn resolve_section(raw: &str, sections: &[String]) -> Result<String, WriteError>
     if sections.is_empty() {
         return Err(WriteError::SectionRequired);
     }
-    let lines: Vec<&str> = raw.lines().collect();
-    let flags = markdown::code_block_flags(&lines);
+    let lines = split_lines(raw);
+    let refs: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    let flags = markdown::code_block_flags(&refs);
     for candidate in sections {
         if lines
             .iter()
             .enumerate()
-            .any(|(idx, text)| !flags[idx] && strip_bom(text).trim() == candidate.as_str())
+            .any(|(idx, l)| !flags[idx] && strip_bom(&l.text).trim() == candidate.as_str())
         {
             return Ok(candidate.clone());
         }
@@ -177,16 +254,16 @@ fn resolve_section(raw: &str, sections: &[String]) -> Result<String, WriteError>
     Ok(sections[0].clone())
 }
 
-/// 段尾：下一个一级 / 二级标题之前。代码块内的标题不算段尾。
-fn section_end(lines: &[String], flags: &[bool], from: usize) -> usize {
+/// 段尾：下一个层级不高于目标标题的标题之前。代码块内的标题不算段尾。
+fn section_end(lines: &[Line], flags: &[bool], from: usize, level: usize) -> usize {
     for idx in from..lines.len() {
         if flags[idx] {
             continue;
         }
-        let trimmed = strip_bom(&lines[idx]).trim_start();
+        let trimmed = strip_bom(&lines[idx].text).trim_start();
         if trimmed.starts_with('#') {
-            let level = trimmed.chars().take_while(|c| *c == '#').count();
-            if level <= 2 {
+            let found = trimmed.chars().take_while(|c| *c == '#').count();
+            if found > 0 && found <= level {
                 return idx;
             }
         }
@@ -212,7 +289,7 @@ mod tests {
     fn keeps_lf() {
         let out = insert(DOC, "## 待办", "- [ ] 新的一项");
         assert!(out.content.contains("\n- [ ] 新的一项\n"));
-        assert!(!out.content.contains("\r\n"));
+        assert!(!out.content.contains('\r'));
         assert_eq!(out.line, 6);
     }
 
@@ -221,8 +298,23 @@ mod tests {
         let crlf = DOC.replace('\n', "\r\n");
         let out = insert(&crlf, "## 待办", "- [ ] 新的一项");
         assert!(out.content.contains("\r\n- [ ] 新的一项\r\n"));
-        assert!(!out.content.replace("\r\n", "").contains('\r'));
-        assert!(!out.content.contains("\n- [ ] 新的一项\n"));
+        assert_eq!(out.content.replace("\r\n", "").matches('\r').count(), 0);
+    }
+
+    #[test]
+    fn mixed_eol_is_preserved_line_by_line() {
+        let mixed = "A\r\nB\nC\n";
+        let out = insert(mixed, "## 记录", "NEW");
+        assert_eq!(out.content.matches("\r\n").count(), 1, "只原有的一行是 CRLF");
+        assert!(out.content.contains("B\n"), "LF 行不能变成 CRLF");
+        assert!(!out.content.contains("B\r\n"));
+        assert!(out.content.contains("NEW"));
+    }
+
+    #[test]
+    fn no_trailing_newline_gets_only_a_separator() {
+        let out = insert("# 标题\n\n## 待办\n\n- [ ] 旧", "## 待办", "- [ ] 新");
+        assert!(out.content.contains("- [ ] 旧\n- [ ] 新"));
     }
 
     #[test]
@@ -237,7 +329,6 @@ mod tests {
     fn ignores_heading_inside_code_block() {
         let doc = "# 标题\n\n```md\n## 待办\n```\n\n## 记录\n\n正文\n";
         let out = insert(doc, "## 待办", "- [ ] 真的待办");
-        // 代码块里的 `## 待办` 不算命中，应该在末尾新建真段
         assert!(out.content.ends_with("## 待办\n\n- [ ] 真的待办\n"));
     }
 
@@ -245,15 +336,32 @@ mod tests {
     fn code_block_heading_does_not_end_section() {
         let doc = "## 待办\n\n```md\n## 记录\n```\n\n- [ ] 仍在待办段\n";
         let out = insert(doc, "## 待办", "- [ ] 新的一项");
-        // 代码块里的 `## 记录` 不能截断段尾
         assert!(out.content.contains("- [ ] 仍在待办段\n- [ ] 新的一项\n"));
     }
 
     #[test]
-    fn h3_does_not_end_section() {
+    fn h3_section_ends_at_next_h3() {
+        let doc = "## 记录\n\n### 甲\n\n旧甲\n\n### 乙\n\n旧乙\n";
+        let out = insert(doc, "### 甲", "新甲");
+        assert!(
+            out.content.find("新甲").unwrap() < out.content.find("### 乙").unwrap(),
+            "H3 段不能越过下一个 H3：{}",
+            out.content
+        );
+    }
+
+    #[test]
+    fn h3_does_not_end_h2_section() {
         let doc = "## 待办\n\n### 子小节\n\n- [ ] 子项\n";
         let out = insert(doc, "## 待办", "- [ ] 新的一项");
         assert!(out.content.contains("- [ ] 子项\n- [ ] 新的一项\n"));
+    }
+
+    #[test]
+    fn creates_section_without_erasing_trailing_spaces() {
+        let out = insert("正文   ", "## 会议", "一行记录");
+        assert!(out.content.starts_with("正文   "), "{}", out.content);
+        assert!(out.content.ends_with("## 会议\n\n一行记录\n"));
     }
 
     #[test]

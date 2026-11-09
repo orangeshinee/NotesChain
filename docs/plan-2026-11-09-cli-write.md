@@ -1,8 +1,10 @@
 # 定向写入 CLI 方案（待确认）
 
-日期：2026-11-09 ｜ 适用版本：master `c4e4284` ｜ 状态：已完成（实现）；单元与端到端：已验证；`release-gate.ps1`：未验证（本机无 pwsh）；review：未开始
+日期：2026-11-09 ｜ 适用版本：master `c4e4284` ｜ 状态：已完成（实现 + review 修复）；单元与端到端：已验证；`release-gate.ps1`：未验证（本机无 pwsh）；review：已完成
 
 核查范围：`src/*.rs`、`docs/api.md`、`docs/agents/*.md`、`Cargo.toml`、`README.md`、`tools/`。事实结论均标 `路径:行号`；设计草案与待确认项单独标注，不与现状混写。
+
+> 文中 `路径:行号` 是 v2 撰写时基于 `c4e4284`（实现前）的快照。实现与 review 修复后行号会漂移，排查请以函数名 / 文件路径为准；§2、§5 描述的是改动前的现状。
 
 v2 依据本轮 review 修订：拆开「底层能力」与「调用方责任」，补 CLI 定位与鉴权（原 §8 的 `session.json` 方案有循环依赖且会把 token 提交进 Git），补命令契约、防呆与退出码，修正 BOM 后果、标题别名、pitfalls 条号、日程「疑似」表述、验证范围。
 
@@ -16,7 +18,7 @@ v2 依据本轮 review 修订：拆开「底层能力」与「调用方责任」
 | HTTP 接口（`src/api.rs:55-88`） | `POST /api/todos/append` 有 `path`（`src/api.rs:753-759`），标题写死；`POST /api/schedule/append` 只有 `text`（`src/api.rs:875-878`），文件与标题都写死 | 日程接口补 `path`；两个接口补 `section`；日程的缺省标题要保留别名兼容 |
 | CLI（`src/main.rs:19-49`） | 只有 7 个 server 启动参数，`clap::Parser`，无 `Subcommand`，`axum::serve` 常驻（`src/main.rs:87`） | 新增子命令，同时必须解决「CLI 怎么找到 server」「怎么带 token」「怎么防呆」三件新增工作 |
 
-把 CLI 当成一个新写入入口，就会带出三件原接口不用管的事：**定位**（root / port）、**鉴权**（token 不落盘）、**安全边界**（重复执行、文件新建、非交互场景）。v1 把这部分压成「token 传给 CLI」一句，是它不能作为开工依据的主因。
+把 CLI 当成一个新写入入口，就会带出三件原接口不用管的事：**定位**（root / port）、**鉴权**（token 落用户级登记表，绝不落笔记目录）、**安全边界**（重复执行、文件新建、非交互场景）。v1 把这部分压成「token 传给 CLI」一句，是它不能作为开工依据的主因。
 
 ## 2. 现状核查
 
@@ -57,7 +59,7 @@ v2 依据本轮 review 修订：拆开「底层能力」与「调用方责任」
 
 ### 3.3 鉴权
 
-`auth` 从 `Cookie: nc_token=` 取值（`src/api.rs:157-179`），不接受 header 或 query。token 每次进程随机生成（`src/state.rs:173-177`），只存在进程内存、只在启动日志打印一次（`src/state.rs:21`、`docs/agents/workflow.md:19`）。`--no-token` 时 token 为空串，`auth` 直接放行（`src/state.rs:73`、`src/api.rs:166-169`）。`Cargo.toml:8-19` 当前无 HTTP client 依赖。
+`auth` 从 `Cookie: nc_token=` 取值（`src/api.rs:157-179`），不接受 header 或 query。token 每次进程随机生成（`src/state.rs:173-177`），只存在进程内存、只在启动日志打印一次（`src/state.rs:21`、`docs/agents/workflow.md:19`），另由 `src/cli.rs` 存一份到用户级登记表供 CLI 读取，绝不写进笔记目录。`--no-token` 时 token 为空串，`auth` 直接放行（`src/state.rs:73`、`src/api.rs:166-169`）。`Cargo.toml:8-19` 当前无 HTTP client 依赖。
 
 **token 不能写进笔记目录。** `src/git.rs:357-377` 自动生成的默认 `.gitignore` 只有 `*.tmp`、`.noteschain.*.tmp`、`.DS_Store`、`Thumbs.db`、`desktop.ini`，没有 `.noteschain/` 目录规则；`git.rs:73` 启动时会调 `ensure_gitignore`，之后自动提交队列会收走目录里的新文件。`src/index.rs:303-340` 的忽略实现也只支持 `name` / `dir/` / `*.ext` 三种写法。所以「在笔记根写 session.json」这个方案会把 token 提交进版本历史，v1 的 §8 第 4 条作废。
 
@@ -170,14 +172,16 @@ CLI 会改用户笔记文件，按 mutating 命令处理：
 | 退出码 | 含义 |
 | --- | --- |
 | 0 | 成功，含 `skipped` / `dry_run` |
-| 2 | 参数错误（含 `--section` 格式非法、缺 `--text`） |
+| 2 | 参数错误（含 `--section` 格式非法、缺 `--text`、路径越界） |
 | 3 | 目标文件不存在且未带 `--create` |
 | 4 | 定位失败（无实例 / 多实例未消歧 / server 未启动 / 鉴权失败） |
-| 5 | 写入冲突（路径越界、段策略拒绝、版本冲突） |
+| 5 | 写入冲突 / 服务端错误（`internal`、`conflict`） |
+
+`--json` 模式下成功结果走 stdout，错误 JSON 走 stderr，stdout 留给脚本解析成功结果。
 
 `--help` / `--version` 由 clap 提供；退出码表、stdout/stderr 分流、非 TTY 行为要实测，见 §9。
 
-HTTP 侧扩展现有两个接口，不新增路由（若纳入 `add line`，再评估是否加 `POST /api/lines/append`）：
+HTTP 侧扩展现有两个接口，并新增 `POST /api/lines/append`（`add line` 已按 §8 第 1 条纳入）：
 
 ```
 POST /api/todos/append     { "text": "...", "path": "...", "section": "## 待办" }
@@ -213,11 +217,13 @@ POST /api/schedule/append  { "text": "...", "path": "...", "section": "## 日程
 
 验证分四块，不只看库测试：
 
-- **单元**：上表阶段 1 的 7 项。
+- **单元**：上表阶段 1 的各项。
 - **构建与静态**：`cargo build --release`、`cargo test`、`cargo clippy`。`README.md:74` 写明 CI 在 Windows 与 Ubuntu 双平台跑这三项，Linux 侧可直接跑；Windows 侧另跑 `pwsh -File tools/release-gate.ps1`（`AGENTS.md:9`）。两边结果都要报，不写成「只在 Windows 侧跑」。
 - **CLI 契约**（对应 `check` 的 CLI Command Surface）：`--help` / `--version`；退出码矩阵 0/2/3/4/5 各造一次；stdout 与 stderr 分流；`--json` schema 可被脚本解析；非 TTY（cron / Hermes）路径；`--dry-run` 零写入；`--unique` 连跑两次；`--create` 新建文件与父目录；server 未启动报错；`--no-token` 实例；两个实例并存时消歧；登记表陈旧条目的提示。
 - **端到端**：写入后核对落盘原文、索引汇总、Git 提交队列、界面 revision；真实目录用 `tools/verify-real-dir.ps1` 复核「零改写」。
 
-实施验证（2026-11-09）：`cargo test` 50 passed、`cargo clippy --all-targets -- -D warnings` No issues found、`cargo build --release` Finished。另有端到端脚本（临时文件，不在仓库）以真实进程跑 49 项断言全绿：退出码 0/2/3/4/5、`--dry-run` 零写入、`--unique` 跳过、`--create` 新建（普通笔记不套日记模板）、日程白名单与老笔记别名、CRLF / BOM 保持、代码块内标题不误命中、旧前端只传 `text` 零改动、索引 / revision / Git 提交队列、带 token 与 `--no-token`、多实例消歧、陈旧条目过滤、登记表权限 600 且不落在笔记目录。
+实施与 review 验证（2026-11-09）：`cargo test`、`cargo clippy --all-targets -- -D warnings`、`cargo build --release` 三项全绿；另有两份端到端脚本（临时文件，不在仓库）以真实进程跑完全部断言，全绿。覆盖：退出码矩阵、`--dry-run` 零写入、`--unique` 跳过、`--create` 新建（普通笔记不套日记模板）、日程白名单与老笔记别名、CRLF / BOM / 混合行尾保持、H3 段尾、标题换行注入拒绝、段不存在时尾空格保留、代码块内标题不误命中、旧前端只传 `text` 零改动、索引 / revision / Git 提交队列、带 token 与 `--no-token`、多实例消歧与同根拒绝、陈旧条目过滤、登记表权限与落点、`--json` 错误走 stderr。
+
+首轮 review 发现并修复：token 登记表回退路径可能落进笔记根、`--section` 可注入多行、混合行尾被整篇统一、H3 段尾判定、登记表非原子写与启动竞态、chunked 尺寸溢出、退出码与错误码映射、Windows `--dir` 归一化、同笔记根多实例并发写、日程显式标题破坏别名兼容、段不存在时抹掉尾空格、文档 token 口径冲突。
 
 `pwsh -File tools/release-gate.ps1` 未执行：本机无 pwsh，未验证，需在 Windows 侧或装了 pwsh 的 CI 上补跑。设计文档已按实施结果更新状态。

@@ -18,7 +18,9 @@ http://127.0.0.1:8090
 - 之后所有请求（`fetch`、`<img>`、`<a download>`）靠浏览器自动携带 Cookie。
 - **所有 `/api/*` 与静态资源接口**（`/app.js`、`/style.css`、`/editor.js`）都校验 Cookie；缺失或错误返回 `401 unauthorized`。
 - 启动参数 `--no-token`：进程内 token 为空，**全部接口不鉴权**（仅建议个人独占机器使用）。
-- token 只存在进程内存，重启即失效。
+- token 每次启动随机生成，重启即失效。除进程内存外，CLI 会在**用户级目录**的实例登记表
+  （`$XDG_RUNTIME_DIR/noteschain/instances.json` / `%LOCALAPPDATA%\NotesChain\instances.json`）
+  存一份，权限 600；**绝不写进笔记目录**，否则会被 Git 自动提交收进版本历史。
 
 ### 1.3 统一响应包络与错误码
 

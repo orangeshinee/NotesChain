@@ -18,7 +18,8 @@ pub struct AppState {
     pub notes_root: PathBuf,
     /// 附件目录：`<root>/assets`（存在时），否则 notes_root/assets
     pub assets_root: PathBuf,
-    /// 本次进程的启动 token（不落盘，PRD 9.1）；`--no-token` 时为空串，表示不鉴权
+    /// 本次进程的启动 token；CLI 另存一份到用户级实例登记表（见 src/cli.rs），
+    /// 绝不写进笔记目录。`--no-token` 时为空串，表示不鉴权
     pub token: String,
     /// 是否禁用 token 鉴权（--no-token）
     pub no_token: bool,

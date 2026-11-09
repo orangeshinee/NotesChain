@@ -86,7 +86,6 @@ async fn main() -> anyhow::Result<()> {
 
     let app = api::router(state.clone());
     let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
 
     let instance = cli::Instance {
         root: state.root.to_string_lossy().to_string(),
@@ -97,7 +96,15 @@ async fn main() -> anyhow::Result<()> {
             .format("%Y-%m-%d %H:%M:%S")
             .to_string(),
     };
+    // 先登记再监听：端口一可连时登记表必须已就绪，否则 CLI 会抢在 register 前报「找不到实例」
     cli::register(&instance);
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(err) => {
+            cli::unregister(&instance);
+            return Err(err.into());
+        }
+    };
 
     println!("NotesChain 已启动");
     println!("  索引：{file_count} 个 Markdown 文件，{todo_count} 条未完成待办");
@@ -106,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
         println!("  ⚠ 已用 --no-token 关闭鉴权，仅建议在个人独占机器使用");
     } else {
         println!("  打开：http://127.0.0.1:{}/?token={}", args.port, state.token);
-        println!("  （token 只存在于本次进程，重启后需用新地址重新打开）");
+        println!("  （token 每次启动重新生成；CLI 从用户级登记表读取，重启后需用新地址重新打开）");
     }
 
     let served = axum::serve(listener, app).await;
