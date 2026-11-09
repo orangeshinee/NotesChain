@@ -168,3 +168,56 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 }
+
+#[cfg(test)]
+mod cli_args_tests {
+    use super::Args;
+    use clap::Parser;
+
+    #[test]
+    fn schedule_write_options_require_add() {
+        let cases = [
+            &["noteschain", "schedule", "--file", "2026-11-09"][..],
+            &["noteschain", "schedule", "--today"][..],
+            &["noteschain", "schedule", "--section", "## 日程"][..],
+            &["noteschain", "schedule", "--create"][..],
+            &["noteschain", "schedule", "--unique"][..],
+            &["noteschain", "schedule", "--dry-run"][..],
+        ];
+        for argv in cases {
+            let err = Args::try_parse_from(argv).unwrap_err();
+            assert!(
+                err.to_string().contains("--add"),
+                "参数 {:?} 应提示需要 --add，实际错误：{}",
+                argv,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn schedule_write_options_accept_add() {
+        Args::try_parse_from([
+            "noteschain",
+            "schedule",
+            "--add",
+            "15:00 周会",
+            "--file",
+            "2026-11-09",
+            "--section",
+            "## 日程",
+            "--create",
+            "--unique",
+            "--dry-run",
+        ])
+        .unwrap();
+        Args::try_parse_from([
+            "noteschain",
+            "schedule",
+            "--add",
+            "15:00 周会",
+            "--today",
+        ])
+        .unwrap();
+    }
+}

@@ -43,22 +43,22 @@ pub enum Command {
         #[arg(long, value_name = "TEXT")]
         add: Option<String>,
         /// 目标文件：可只写文件名（如 2026-11-09 / 读书笔记），重名会提示；缺省今日日记
-        #[arg(long, value_name = "PATH")]
+        #[arg(long, value_name = "PATH", requires = "add")]
         file: Option<String>,
         /// 显式指向今日日记（与 --file 互斥）
-        #[arg(long, conflicts_with = "file")]
+        #[arg(long, conflicts_with = "file", requires = "add")]
         today: bool,
         /// 目标标题；缺省 ## 日程（兼容 ## 今日日程）
-        #[arg(long, value_name = "HEADING")]
+        #[arg(long, value_name = "HEADING", requires = "add")]
         section: Option<String>,
         /// 目标文件不存在时允许新建
-        #[arg(long)]
+        #[arg(long, requires = "add")]
         create: bool,
         /// 目标段内已有完全相同行时跳过
-        #[arg(long)]
+        #[arg(long, requires = "add")]
         unique: bool,
         /// 只预览，零写入
-        #[arg(long)]
+        #[arg(long, requires = "add")]
         dry_run: bool,
     },
     /// 速记：往今日笔记追加一行自由文本

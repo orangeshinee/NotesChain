@@ -293,7 +293,12 @@ fn section_end(lines: &[Line], flags: &[bool], from: usize, level: usize) -> usi
         let trimmed = strip_bom(&lines[idx].text).trim_start();
         if trimmed.starts_with('#') {
             let found = trimmed.chars().take_while(|c| *c == '#').count();
-            if found > 0 && found <= level {
+            let rest = &trimmed[found..];
+            // CommonMark ATX 标题：1-6 个 #，后接空格 / tab 或行尾。
+            // `#标签`、`##不是标题` 只是普通文本，不能提前结束当前段。
+            let is_atx = (1..=6).contains(&found)
+                && (rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t'));
+            if is_atx && found <= level {
                 return idx;
             }
         }
@@ -424,6 +429,16 @@ mod tests {
         let out = insert_line(DOC, &[], "一行", false).unwrap();
         assert!(out.content.ends_with("一行\n"));
         assert_eq!(out.section, "");
+    }
+
+    #[test]
+    fn hash_without_space_does_not_end_section() {
+        let doc = "## 待办\n\n- [ ] 旧的一项\n\n#工作\n普通文本\n\n## 记录\n";
+        let out = insert(doc, "## 待办", "- [ ] 新的一项");
+        assert_eq!(
+            out.content,
+            "## 待办\n\n- [ ] 旧的一项\n\n#工作\n普通文本\n- [ ] 新的一项\n\n## 记录\n"
+        );
     }
 
     #[test]
