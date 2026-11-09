@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 
 use crate::state::AppState;
 use crate::todo_write::{self, LocateError};
+use crate::write;
 
 /// 每日文件骨架的权威副本（PRD 3.1.4），编译期内嵌，不读运行时文件。
 const DAILY_TEMPLATE: &str = include_str!("../docs/templates/daily-note.md");
@@ -777,261 +778,310 @@ fn title_or_stem(title: &str, rel: &str) -> String {
 }
 // ---------------------------------------------------------------- 快速添加待办
 
+// ---------------------------------------------------------------- 定向写入
+
+/// 三个 append 接口共用请求体。`target` 是 notes/append 的旧字段名，保留兼容。
 #[derive(Deserialize)]
-struct AppendTodoRequest {
+struct AppendRequest {
     text: String,
-    /// 不传则写进今天的日记
+    /// 目标文件（相对笔记根）；缺省今日日记
     #[serde(default)]
     path: Option<String>,
-}
-
-fn insert_into_section_any(content: &str, headings: &[&str], line: &str) -> (String, usize) {
-    for heading in headings {
-        if content.lines().any(|l| l.trim() == *heading) {
-            return insert_into_section(content, heading, line);
-        }
-    }
-    insert_into_section(content, headings[0], line)
-}
-
-fn insert_into_section(content: &str, heading: &str, line: &str) -> (String, usize) {
-    let lines: Vec<&str> = content.lines().collect();
-    // 找 `## 待办` 段
-    let mut heading_idx: Option<usize> = None;
-    for (idx, text) in lines.iter().enumerate() {
-        if text.trim() == heading {
-            heading_idx = Some(idx);
-            break;
-        }
-    }
-
-    match heading_idx {
-        Some(h) => {
-            // 段尾：下一个一级/二级标题之前
-            let mut end = lines.len();
-            for (idx, text) in lines.iter().enumerate().skip(h + 1) {
-                let trimmed = text.trim_start();
-                if trimmed.starts_with('#') {
-                    let level = trimmed.chars().take_while(|c| *c == '#').count();
-                    if level <= 2 {
-                        end = idx;
-                        break;
-                    }
-                }
-            }
-            // 去掉段尾空行
-            let mut insert_at = end;
-            while insert_at > h + 1 && lines[insert_at - 1].trim().is_empty() {
-                insert_at -= 1;
-            }
-            let mut out: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
-            out.insert(insert_at, line.to_string());
-            let mut text = out.join("\n");
-            if content.ends_with('\n') || !content.is_empty() {
-                text.push('\n');
-            }
-            (text, insert_at + 1)
-        }
-        None => {
-            let mut text = content.trim_end().to_string();
-            if !text.is_empty() {
-                text.push_str("\n\n");
-            }
-            text.push_str(&format!("{heading}\n\n"));
-            text.push_str(line);
-            text.push('\n');
-            let count = text.lines().count();
-            (text, count)
-        }
-    }
-}
-
-async fn append_todo(
-    State(st): State<Arc<AppState>>,
-    Json(body): Json<AppendTodoRequest>,
-) -> Result<Json<Value>, ApiError> {
-    let text = body.text.trim();
-    if text.is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "内容为空"));
-    }
-    if text.contains('\n') {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "一次只能添加一条"));
-    }
-    let text = text.trim_start_matches("- [ ]").trim_start_matches("- [x]").trim();
-
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let rel = body
-        .path
-        .clone()
-        .unwrap_or_else(|| format!("{}/{}/{}.md", &today[..4], &today[5..7], today));
-
-    let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
-    let lock_key = st.relative(&abs);
-    let lock = st.lock_for(&lock_key).await;
-    let _guard = lock.lock().await;
-
-    let exists = abs.is_file();
-    let content = if exists {
-        std::fs::read_to_string(&abs).map_err(ApiError::internal)?
-    } else {
-        render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
-    };
-
-    let (updated, line_no) = insert_into_section(&content, "## 待办", &format!("- [ ] {text}"));
-    if !exists {
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
-        }
-    }
-    todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
-    st.index
-        .write()
-        .await
-        .upsert(&st.notes_root, &rel)
-        .map_err(ApiError::internal)?;
-    st.git.notify();
-    st.revision
-        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    Ok(Json(json!({
-        "path": rel,
-        "line": line_no,
-        "version": crate::index::version_of_text(mtime_ms(&abs), &updated),
-    })))
-}
-#[derive(Deserialize)]
-struct AppendScheduleRequest {
-    text: String,
-}
-
-async fn append_schedule(
-    State(st): State<Arc<AppState>>,
-    Json(body): Json<AppendScheduleRequest>,
-) -> Result<Json<Value>, ApiError> {
-    let raw = body.text.trim();
-    if raw.is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "内容为空"));
-    }
-    if raw.contains('\n') {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "一次只能添加一条"));
-    }
-    let line = if raw.starts_with('-') {
-        raw.to_string()
-    } else {
-        format!("- {raw}")
-    };
-
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let rel = format!("{}/{}/{}.md", &today[..4], &today[5..7], today);
-    let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
-    let lock_key = st.relative(&abs);
-    let lock = st.lock_for(&lock_key).await;
-    let _guard = lock.lock().await;
-
-    let exists = abs.is_file();
-    let content = if exists {
-        std::fs::read_to_string(&abs).map_err(ApiError::internal)?
-    } else {
-        render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
-    };
-
-    let (updated, line_no) = insert_into_section_any(&content, &["## 日程", "## 今日日程"], &line);
-    if !exists {
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
-        }
-    }
-    todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
-    st.index
-        .write()
-        .await
-        .upsert(&st.notes_root, &rel)
-        .map_err(ApiError::internal)?;
-    st.git.notify();
-    st.revision
-        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    Ok(Json(json!({
-        "path": rel,
-        "line": line_no,
-        "version": crate::index::version_of_text(mtime_ms(&abs), &updated),
-    })))
-}
-
-// ---------------------------------------------------------------- 速记追加（CLI 用）
-
-#[derive(Deserialize)]
-struct AppendNoteRequest {
-    text: String,
-    /// 目标文件（相对笔记根）；不传则为今日日记
+    /// notes/append 的旧字段名，等价于 path
     #[serde(default)]
     target: Option<String>,
+    /// 显式指向今日日记（与 path/target 互斥）
+    #[serde(default)]
+    today: bool,
+    /// 目标标题；todo/schedule 有缺省，note 不传则为文件尾追加
+    #[serde(default)]
+    section: Option<String>,
+    /// 显式 false 时目标文件不存在即 404（CLI 防呆）
+    #[serde(default)]
+    create: Option<bool>,
+    /// 目标段内已有完全相同行时跳过
+    #[serde(default)]
+    unique: Option<bool>,
+    /// 只预览不写盘
+    #[serde(default)]
+    dry_run: Option<bool>,
 }
 
-/// POST /api/notes/append：往今日笔记（或指定文件）尾部追加一行自由文本。
-/// 与 append_todo / append_schedule 同一套写顺序：resolve → 按文件锁 → 原子写 →
-/// 更新索引 → git.notify → revision+1。CLI 禁止用“读整文件 + 本地拼接 + PUT”模拟追加。
-async fn append_note(
-    State(st): State<Arc<AppState>>,
-    Json(body): Json<AppendNoteRequest>,
+impl AppendRequest {
+    fn rel(&self, today: &str) -> String {
+        self.path
+            .clone()
+            .or_else(|| self.target.clone())
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| format!("{}/{}/{}.md", &today[..4], &today[5..7], today))
+    }
+
+    /// 是否显式给了 --file / target（用于与 --today 的互斥校验）。
+    fn has_file(&self) -> bool {
+        self.path
+            .as_deref()
+            .or(self.target.as_deref())
+            .map(|p| !p.trim().is_empty())
+            .unwrap_or(false)
+    }
+}
+
+/// `--file` 短名解析：只写文件名，不写一堆前缀目录。
+///
+/// - 含 `/`（完整路径）：原样透传，旧调用方零影响。
+/// - 短名：按文件名 stem 在索引里找（大小写不敏感、自动忽略 `.md` 后缀）
+///   - 唯一命中 → 展开成索引里的完整路径
+///   - 多个命中 → 报错并列出全部候选，不静默取第一个（与 PRD 3.5.4 同名冲突口径一致）
+///   - 零命中 → 日期形 `YYYY-MM-DD` 映射到规范日记路径；其余自动补 `.md` 走旧 create 逻辑
+fn resolve_target(index: &crate::index::Index, raw: &str) -> Result<String, ApiError> {
+    resolve_target_inner(index, raw).map_err(|msg| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", msg))
+}
+
+/// 纯函数部分：短名 → 完整路径（或错误文案），便于单测。
+fn resolve_target_inner(index: &crate::index::Index, raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    // 完整路径（含分隔符）保持旧行为，不做短名匹配
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return Ok(trimmed.to_string());
+    }
+    // 忽略大小写地去掉 .md 后缀，得到用于匹配的 stem。
+    // 先确认 n-3 落在字符边界上：--file 以多字节字符结尾（如 "😀" 4 字节）时直接按
+    // 字节切会 panic，所以加 is_char_boundary 守卫。
+    let n = trimmed.len();
+    let stem = if n >= 3
+        && trimmed.is_char_boundary(n - 3)
+        && trimmed.as_bytes()[n - 3..].eq_ignore_ascii_case(b".md")
+    {
+        &trimmed[..n - 3]
+    } else {
+        trimmed
+    };
+    let stem_lc = stem.to_lowercase();
+
+    let hits: Vec<String> = index
+        .files
+        .iter()
+        .filter(|f| f.path.ends_with(".md"))
+        .filter(|f| {
+            let name = f.path.rsplit('/').next().unwrap_or("");
+            let name_stem = name.strip_suffix(".md").unwrap_or(name);
+            name_stem.to_lowercase() == stem_lc
+        })
+        .map(|f| f.path.clone())
+        .collect();
+
+    match hits.len() {
+        0 => {
+            if crate::index::is_iso_date(stem) {
+                // 日期短名按目录模型展开，即使当天文件还没建也能定位
+                Ok(format!("{}/{}/{}.md", &stem[..4], &stem[5..7], stem))
+            } else {
+                // 旧行为：补 .md 后按 notes 根相对路径处理，交给 create 逻辑
+                Ok(format!("{stem}.md"))
+            }
+        }
+        1 => Ok(hits[0].clone()),
+        _ => {
+            let mut sorted = hits.clone();
+            sorted.sort();
+            Err(format!(
+                "文件名「{stem}」对应多个文件，请改用完整路径：{}",
+                sorted.join("、")
+            ))
+        }
+    }
+}
+
+/// 标题归一化：接受 `## 待办` 完整标题行，也接受 `待办` 纯标题名。
+fn normalize_section(raw: &str) -> Result<String, ApiError> {
+    if raw.contains('\n') || raw.contains('\r') {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "标题不能含换行",
+        ));
+    }
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "标题为空"));
+    }
+    let out = if trimmed.starts_with('#') {
+        trimmed.to_string()
+    } else {
+        format!("## {trimmed}")
+    };
+    let level = out.chars().take_while(|c| *c == '#').count();
+    if level == 0 || level > 6 || out.trim_start_matches('#').trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "标题格式非法",
+        ));
+    }
+    Ok(out)
+}
+
+fn sections_for(kind: write::Kind, requested: Option<String>) -> Result<Vec<String>, ApiError> {
+    if let Some(raw) = requested {
+        let section = normalize_section(&raw)?;
+        if kind == write::Kind::Schedule {
+            // 日程解析器只认这两个标题，写进别的段会静默不可见（PRD 3.3）
+            if !write::SCHEDULE_SECTIONS.contains(&section.as_str()) {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "bad_request",
+                    "日程标题只能是 ## 日程 或 ## 今日日程",
+                ));
+            }
+            // 显式给了白名单标题时仍按候选列表解析，避免老笔记被新建第二个日程段
+            let mut sections = vec![section.clone()];
+            for candidate in write::SCHEDULE_SECTIONS {
+                if *candidate != section && !sections.iter().any(|s| s == *candidate) {
+                    sections.push((*candidate).to_string());
+                }
+            }
+            return Ok(sections);
+        }
+        return Ok(vec![section]);
+    }
+    Ok(kind.default_sections())
+}
+
+async fn append_impl(
+    st: Arc<AppState>,
+    kind: write::Kind,
+    body: AppendRequest,
 ) -> Result<Json<Value>, ApiError> {
     let text = body.text.trim();
     if text.is_empty() {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "内容为空"));
     }
-    if text.contains('\n') {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "一次只能添加一行"));
+    if text.contains('\n') || text.contains('\r') {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "一次只能添加一条",
+        ));
     }
+    let line = kind.format_line(text);
+    let sections = sections_for(kind, body.section.clone())?;
 
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let default_rel = format!("{}/{}/{}.md", &today[..4], &today[5..7], today);
-    let rel = body.target.clone().unwrap_or_else(|| default_rel.clone());
+    if body.today && body.has_file() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "--today 与 --file 不能同时使用",
+        ));
+    }
+    let rel = if body.today {
+        default_rel.clone()
+    } else if body.has_file() {
+        let raw = body.rel(&today);
+        let index = st.index.read().await;
+        resolve_target(&index, &raw)?
+    } else {
+        default_rel.clone()
+    };
     ensure_markdown(&rel, "追加")?;
+
     let abs = st.resolve(&rel).map_err(ApiError::bad_path)?;
     let lock_key = st.relative(&abs);
     let lock = st.lock_for(&lock_key).await;
     let _guard = lock.lock().await;
 
     let exists = abs.is_file();
+    // 旧前端 / 旧 CLI 不传 create，沿用「不存在就按模板新建」；CLI 显式传 false 才拒绝
+    if !exists && body.create == Some(false) {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("文件不存在：{rel}（需要 create 才新建）"),
+        ));
+    }
+    let is_diary_target = rel == default_rel || diary_date_from_path(&rel).is_some();
     let content = if exists {
         std::fs::read_to_string(&abs).map_err(ApiError::internal)?
-    } else if rel == default_rel {
-        // 今日日记不存在：与 append_todo 一致，按日记模板新建
-        render_template(DAILY_TEMPLATE, &today, &today, &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string())
+    } else if is_diary_target {
+        // 日记模板的标题/日期用目标文件自身日期，而不是 today：--file 2025-01-01 这类
+        // 过去日期的新建日记若用 today 会写成今天的标题/日期戳，造成内容与路径不符。
+        let doc_date = diary_date_from_path(&rel).unwrap_or_else(|| today.clone());
+        render_template(
+            DAILY_TEMPLATE,
+            &doc_date,
+            &doc_date,
+            &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+        )
     } else {
         String::new()
     };
 
-    // 文件尾追加一行：保留原文件行尾风格（CRLF 文件用 \r\n），末尾无换行时先补一个。
-    let eol = if content.contains("\r\n") { "\r\n" } else { "\n" };
-    let mut updated = content;
-    if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push_str(eol);
+    let unique = body.unique.unwrap_or(false);
+    let outcome = if sections.is_empty() {
+        write::append_at_end(&content, &line, unique)
+    } else {
+        write::insert_line(&content, &sections, &line, unique)
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string()))?
+    };
+
+    let mut value = json!({
+        "ok": true,
+        "path": rel.clone(),
+        "section": outcome.section.clone(),
+        "line": outcome.line,
+        "text": line,
+    });
+    if body.dry_run.unwrap_or(false) {
+        value["action"] = json!("dry_run");
+        value["version"] = Value::Null;
+        return Ok(Json(value));
     }
-    updated.push_str(text);
-    updated.push_str(eol);
-    let line_no = updated.lines().count();
+    if outcome.skipped {
+        value["action"] = json!("skipped");
+        value["version"] = json!(crate::index::version_of_text(mtime_ms(&abs), &content));
+        return Ok(Json(value));
+    }
 
     if !exists {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
         }
     }
-    todo_write::atomic_write(&abs, &updated).map_err(ApiError::internal)?;
+    todo_write::atomic_write(&abs, &outcome.content).map_err(ApiError::internal)?;
     st.index
         .write()
         .await
         .upsert(&st.notes_root, &rel)
         .map_err(ApiError::internal)?;
     st.git.notify();
-    st.revision
-        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    st.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-    Ok(Json(json!({
-        "path": rel,
-        "line": line_no,
-        "version": crate::index::version_of_text(mtime_ms(&abs), &updated),
-    })))
+    value["action"] = json!("inserted");
+    value["version"] = json!(crate::index::version_of_text(mtime_ms(&abs), &outcome.content));
+    Ok(Json(value))
+}
+
+async fn append_todo(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<AppendRequest>,
+) -> Result<Json<Value>, ApiError> {
+    append_impl(st, write::Kind::Todo, body).await
+}
+
+async fn append_schedule(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<AppendRequest>,
+) -> Result<Json<Value>, ApiError> {
+    append_impl(st, write::Kind::Schedule, body).await
+}
+
+async fn append_note(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<AppendRequest>,
+) -> Result<Json<Value>, ApiError> {
+    append_impl(st, write::Kind::Line, body).await
 }
 
 // ---------------------------------------------------------------- 每日文件 / 索引 / git
@@ -1928,6 +1978,76 @@ mod sync_tests {
         assert_eq!(detect_sync_drive(Path::new("C:/Users/x/OneDrive/notes")), Some("OneDrive"));
         assert_eq!(detect_sync_drive(Path::new("D:/坚果云/notes")), Some("坚果云"));
         assert_eq!(detect_sync_drive(Path::new("D:/notes")), None);
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::resolve_target_inner;
+    use crate::index::{FileEntry, Index};
+
+    fn idx(paths: &[&str]) -> Index {
+        Index {
+            files: paths
+                .iter()
+                .map(|p| FileEntry {
+                    path: (*p).to_string(),
+                    mtime_ms: 0,
+                    size: 0,
+                    version: String::new(),
+                    diary_date: None,
+                    content: String::new(),
+                    todos: vec![],
+                    tags: vec![],
+                })
+                .collect(),
+            warnings: vec![],
+        }
+    }
+
+    fn ok(raw: &str, paths: &[&str]) -> String {
+        resolve_target_inner(&idx(paths), raw).unwrap()
+    }
+
+    #[test]
+    fn full_path_is_untouched() {
+        assert_eq!(ok("raw/读书笔记.md", &["raw/读书笔记.md"]), "raw/读书笔记.md");
+        assert_eq!(ok("2026/11/2026-11-09.md", &[]), "2026/11/2026-11-09.md");
+    }
+
+    #[test]
+    fn unique_short_name_expands() {
+        assert_eq!(ok("2026-11-09", &["2026/11/2026-11-09.md"]), "2026/11/2026-11-09.md");
+        assert_eq!(ok("读书笔记", &["raw/读书笔记.md"]), "raw/读书笔记.md");
+        assert_eq!(ok("读书笔记.md", &["raw/读书笔记.md"]), "raw/读书笔记.md");
+        assert_eq!(ok("README", &["raw/README.md"]), "raw/README.md");
+    }
+
+    #[test]
+    fn duplicate_short_name_is_rejected_with_candidates() {
+        let err = resolve_target_inner(&idx(&["raw/A.md", "raw/sub/A.md"]), "A").unwrap_err();
+        assert!(err.contains("对应多个文件"));
+        assert!(err.contains("raw/A.md"));
+        assert!(err.contains("raw/sub/A.md"));
+    }
+
+    #[test]
+    fn zero_hit_date_maps_to_diary_path() {
+        assert_eq!(ok("2026-11-09", &[]), "2026/11/2026-11-09.md");
+    }
+
+    #[test]
+    fn zero_hit_plain_name_gets_md_suffix() {
+        assert_eq!(ok("新笔记", &[]), "新笔记.md");
+    }
+
+    #[test]
+    fn multibyte_suffix_does_not_panic() {
+        // 以 4 字节字符结尾时，去 .md 后缀不能按字节硬切（曾会 panic）
+        assert_eq!(ok("😀", &[]), "😀.md");
+        assert_eq!(ok("a😀", &[]), "a😀.md");
+        // 多字节 + 大写后缀仍能正确去后缀并命中
+        assert_eq!(ok("a😀.MD", &["raw/a😀.md"]), "raw/a😀.md");
     }
 }
 

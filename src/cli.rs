@@ -34,11 +34,32 @@ pub enum Command {
         /// 关键词（子串，英文不分大小写）
         query: String,
     },
-    /// 查看日程（today / week / month，默认 today）
+    /// 查看日程（today / week / month，默认 today）；--add 追加一条
     Schedule {
         /// 范围：today | week | month
         #[arg(value_parser = ["today", "week", "month"])]
         range: Option<String>,
+        /// 追加一条日程（给了它就不是查询）
+        #[arg(long, value_name = "TEXT")]
+        add: Option<String>,
+        /// 目标文件：可只写文件名（如 2026-11-09 / 读书笔记），重名会提示；缺省今日日记
+        #[arg(long, value_name = "PATH", requires = "add")]
+        file: Option<String>,
+        /// 显式指向今日日记（与 --file 互斥）
+        #[arg(long, conflicts_with = "file", requires = "add")]
+        today: bool,
+        /// 目标标题；缺省 ## 日程（兼容 ## 今日日程）
+        #[arg(long, value_name = "HEADING", requires = "add")]
+        section: Option<String>,
+        /// 目标文件不存在时允许新建
+        #[arg(long, requires = "add")]
+        create: bool,
+        /// 目标段内已有完全相同行时跳过
+        #[arg(long, requires = "add")]
+        unique: bool,
+        /// 只预览，零写入
+        #[arg(long, requires = "add")]
+        dry_run: bool,
     },
     /// 速记：往今日笔记追加一行自由文本
     Note {
@@ -54,10 +75,28 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum TodoCmd {
-    /// 往今日笔记追加一条待办
+    /// 追加一条待办（可指定文件与标题）
     Add {
         /// 待办文本（行内 #标签/子标签、!p0–!p9 由服务端解析）
         text: String,
+        /// 目标文件：可只写文件名（如 2026-11-09 / 读书笔记），重名会提示；缺省今日日记
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
+        /// 显式指向今日日记（与 --file 互斥）
+        #[arg(long, conflicts_with = "file")]
+        today: bool,
+        /// 目标标题；缺省 ## 待办
+        #[arg(long, value_name = "HEADING")]
+        section: Option<String>,
+        /// 目标文件不存在时允许新建
+        #[arg(long)]
+        create: bool,
+        /// 目标段内已有完全相同行时跳过
+        #[arg(long)]
+        unique: bool,
+        /// 只预览，零写入
+        #[arg(long)]
+        dry_run: bool,
     },
     /// 列出未完成待办（编号为未过滤列表中的全局序号）
     List {
@@ -74,10 +113,28 @@ pub enum TodoCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum NoteCmd {
-    /// 往今日笔记追加一行自由文本
+    /// 追加一行自由文本（不传 --section 时追加到文件尾）
     Add {
         /// 文本（单行）
         text: String,
+        /// 目标文件：可只写文件名（如 2026-11-09 / 读书笔记），重名会提示；缺省今日日记
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
+        /// 显式指向今日日记（与 --file 互斥）
+        #[arg(long, conflicts_with = "file")]
+        today: bool,
+        /// 目标标题；不传则追加到文件尾（旧行为）
+        #[arg(long, value_name = "HEADING")]
+        section: Option<String>,
+        /// 目标文件不存在时允许新建
+        #[arg(long)]
+        create: bool,
+        /// 目标段内已有完全相同行时跳过
+        #[arg(long)]
+        unique: bool,
+        /// 只预览，零写入
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -137,14 +194,26 @@ fn run_inner(
     match command {
         Command::Today => cmd_today(&client),
         Command::Todo { cmd } => match cmd {
-            TodoCmd::Add { text } => cmd_todo_add(&client, &text),
+            TodoCmd::Add { text, file, today, section, create, unique, dry_run } => cmd_todo_add(
+                &client,
+                AppendArgs { text: &text, file: file.as_deref(), today, section: section.as_deref(), create, unique, dry_run },
+            ),
             TodoCmd::List { tag } => cmd_todo_list(&client, tag.as_deref()),
             TodoCmd::Done { number } => cmd_todo_done(&client, number),
         },
         Command::Search { query } => cmd_search(&client, &query),
-        Command::Schedule { range } => cmd_schedule(&client, range.as_deref().unwrap_or("today")),
+        Command::Schedule { range, add, file, today, section, create, unique, dry_run } => match add {
+            Some(text) => cmd_schedule_add(
+                &client,
+                AppendArgs { text: &text, file: file.as_deref(), today, section: section.as_deref(), create, unique, dry_run },
+            ),
+            None => cmd_schedule(&client, range.as_deref().unwrap_or("today")),
+        },
         Command::Note { cmd } => match cmd {
-            NoteCmd::Add { text } => cmd_note_add(&client, &text),
+            NoteCmd::Add { text, file, today, section, create, unique, dry_run } => cmd_note_add(
+                &client,
+                AppendArgs { text: &text, file: file.as_deref(), today, section: section.as_deref(), create, unique, dry_run },
+            ),
         },
         Command::Git { cmd } => match cmd {
             GitCmd::Status => cmd_git_status(&client),
@@ -388,23 +457,70 @@ fn cmd_today(client: &Client) -> Result<(), CliFail> {
     Ok(())
 }
 
-fn cmd_todo_add(client: &Client, text: &str) -> Result<(), CliFail> {
-    let raw = client.request(
-        "POST",
-        "/api/todos/append",
-        &[],
-        Some(&serde_json::json!({ "text": text })),
-    )?;
-    if print_raw_if_json(client, &raw) {
+/// 三个 append 子命令共用的参数（收进结构体，避免函数参数过多）。
+struct AppendArgs<'a> {
+    text: &'a str,
+    file: Option<&'a str>,
+    today: bool,
+    section: Option<&'a str>,
+    create: bool,
+    unique: bool,
+    dry_run: bool,
+}
+
+impl AppendArgs<'_> {
+    fn body(&self) -> Value {
+        let mut body = serde_json::json!({
+            "text": self.text,
+            "unique": self.unique,
+            "dry_run": self.dry_run,
+        });
+        if self.create {
+            body["create"] = serde_json::json!(true);
+        }
+        if self.today {
+            body["today"] = serde_json::json!(true);
+        }
+        if let Some(f) = self.file {
+            body["path"] = serde_json::json!(f);
+        }
+        if let Some(s) = self.section {
+            body["section"] = serde_json::json!(s);
+        }
+        body
+    }
+
+    fn post(&self, client: &Client, path: &str) -> Result<(), CliFail> {
+        let raw = client.request("POST", path, &[], Some(&self.body()))?;
+        print_append_result(client, &raw)
+    }
+}
+
+fn print_append_result(client: &Client, raw: &str) -> Result<(), CliFail> {
+    if print_raw_if_json(client, raw) {
         return Ok(());
     }
-    let v: Value = parse_json(&raw)?;
+    let v: Value = parse_json(raw)?;
+    let label = match v["action"].as_str().unwrap_or("inserted") {
+        "dry_run" => "预览",
+        "skipped" => "已存在",
+        _ => "已写入",
+    };
     println!(
-        "已追加到 {}:{}",
+        "[{label}] {}:{}  {}",
         v["path"].as_str().unwrap_or(""),
-        v["line"].as_u64().unwrap_or(0)
+        v["line"].as_u64().unwrap_or(0),
+        v["section"].as_str().unwrap_or("")
     );
     Ok(())
+}
+
+fn cmd_todo_add(client: &Client, a: AppendArgs<'_>) -> Result<(), CliFail> {
+    a.post(client, "/api/todos/append")
+}
+
+fn cmd_schedule_add(client: &Client, a: AppendArgs<'_>) -> Result<(), CliFail> {
+    a.post(client, "/api/schedule/append")
 }
 
 fn cmd_todo_list(client: &Client, tag: Option<&str>) -> Result<(), CliFail> {
@@ -559,23 +675,8 @@ fn cmd_schedule(client: &Client, range: &str) -> Result<(), CliFail> {
     Ok(())
 }
 
-fn cmd_note_add(client: &Client, text: &str) -> Result<(), CliFail> {
-    let raw = client.request(
-        "POST",
-        "/api/notes/append",
-        &[],
-        Some(&serde_json::json!({ "text": text })),
-    )?;
-    if print_raw_if_json(client, &raw) {
-        return Ok(());
-    }
-    let v: Value = parse_json(&raw)?;
-    println!(
-        "已追加到 {}:{}",
-        v["path"].as_str().unwrap_or(""),
-        v["line"].as_u64().unwrap_or(0)
-    );
-    Ok(())
+fn cmd_note_add(client: &Client, a: AppendArgs<'_>) -> Result<(), CliFail> {
+    a.post(client, "/api/notes/append")
 }
 
 fn cmd_git_status(client: &Client) -> Result<(), CliFail> {

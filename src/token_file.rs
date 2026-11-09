@@ -201,14 +201,20 @@ mod tests {
     use super::*;
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "nc-token-test-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        // 放在 crate 的 target/ 下而不是系统 %TEMP%：某些受限/沙箱环境里子进程对系统
+        // 临时目录没有写权限（会在 create_dir_all 处 PermissionDenied），而 target/ 一定
+        // 可写，且随 `cargo clean` 一起清理，不污染系统临时目录。
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-tmp")
+            .join(format!(
+                "nc-token-test-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
