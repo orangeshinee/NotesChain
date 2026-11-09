@@ -1,6 +1,6 @@
 [package]
 name = "noteschain"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "极度轻量、本地优先的 Markdown 笔记工具"
 publish = false
