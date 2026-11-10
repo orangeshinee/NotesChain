@@ -27,6 +27,14 @@
 - 提交前 `git status`：只应有源码/文档。`.demo/`、`target/`、`web/node_modules` 已忽略
 - 不要提交 `.demo/` 下的测试语料
 
+## 分支保护与发布
+
+- master 规则集配置在 `.github/rulesets/master.json`，要求 PR、合并提交和双平台 CI；禁止删除与强推。
+- 应用规则集（需仓库管理员权限）：
+  `gh api --method POST repos/orangeshinee/NotesChain/rulesets --input .github/rulesets/master.json`
+- 发布顺序：版本 bump 与代码同一个 PR → CI 通过并合并 → master 提交上打 annotated tag → Release 自动执行。
+- Release 只接受 master 上的 tag；不要移动已发布 tag。
+
 ## 代码风格
 
 **Rust**
