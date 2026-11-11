@@ -1297,18 +1297,32 @@ async function showFile(path, line) {
   }
 }
 
+// 把文本里的 [[目标]] 渲染成与正文一致的链接样式；逐段 textContent 拼接，不走 innerHTML
+function appendWikiText(parent, text, missing) {
+  const re = /\[\[([^\]]+)\]\]/g;
+  const raw = String(text || '');
+  let last = 0;
+  let m;
+  while ((m = re.exec(raw))) {
+    if (m.index > last) parent.append(document.createTextNode(raw.slice(last, m.index)));
+    parent.append(el('span', missing ? 'wikilink missing' : 'wikilink', '[[' + m[1] + ']]'));
+    last = re.lastIndex;
+  }
+  if (last < raw.length) parent.append(document.createTextNode(raw.slice(last)));
+}
+
 async function mountOutgoing(wrap, path) {
   const panel = el('section', 'backlinks');
   const head = el('div', 'section-head');
   head.append(el('h2', '', '出链'));
   panel.append(head);
-  const body = el('div', 'muted', '读取中…');
+  const body = el('div', 'state state--loading', '读取中…');
   panel.append(body);
   wrap.append(panel);
   try {
     const data = await api('/api/links?path=' + encodeURIComponent(path));
-    body.replaceChildren();
     if (!data.total) {
+      body.className = 'state state--empty';
       body.textContent = '这篇没有指向别处的双链。';
       return;
     }
@@ -1316,15 +1330,22 @@ async function mountOutgoing(wrap, path) {
     for (const item of data.items) {
       const li = el('li');
       li.append(el('div', 'meta', `第 ${item.line} 行`));
-      const resolved = item.resolved ? item.resolved : '未命中';
-      li.append(el('div', 'snippet', `[[${item.target}]] → ${resolved}`));
+      const line = el('div', 'snippet');
+      appendWikiText(line, `[[${item.target}]]`, !item.resolved);
+      line.append(el('span', 'arrow', '→'));
+      line.append(document.createTextNode(item.resolved || '未命中'));
+      li.append(line);
       if (item.resolved) {
+        li.classList.add('is-link');
+        li.title = '打开 ' + item.resolved;
         li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.resolved + '.md')));
       }
       list.append(li);
     }
     body.replaceChildren(list);
+    body.className = '';
   } catch (err) {
+    body.className = 'state state--error';
     body.textContent = '读取失败：' + (err.message || err);
   }
 }
@@ -1333,26 +1354,33 @@ async function mountBacklinks(wrap, path) {
   const head = el('div', 'section-head');
   head.append(el('h2', '', '反向链接'));
   panel.append(head);
-  const body = el('div', 'muted', '读取中…');
+  const body = el('div', 'state state--loading', '读取中…');
   panel.append(body);
   wrap.append(panel);
   try {
     const data = await api('/api/backlinks?path=' + encodeURIComponent(path));
-    body.replaceChildren();
     if (!data.total) {
+      body.className = 'state state--empty';
       body.textContent = '没有其他笔记链接到这里。';
       return;
     }
     const list = el('ul', 'results');
     for (const item of data.items) {
-      const li = el('li');
-      li.append(el('div', 'meta', `${item.path}:${item.line}`));
-      li.append(el('div', 'snippet', item.text));
+      const li = el('li', 'is-link');
+      const meta = el('div', 'meta', `${String(item.path).replace(/\.md$/, '')}:${item.line}`);
+      meta.title = item.path + ':' + item.line;
+      li.append(meta);
+      const line = el('div', 'snippet');
+      appendWikiText(line, item.text);
+      li.append(line);
+      li.title = '打开 ' + item.path + ' 第 ' + item.line + ' 行';
       li.addEventListener('click', () => go('/file/' + encodeURIComponent(item.path) + '@' + item.line));
       list.append(li);
     }
     body.replaceChildren(list);
+    body.className = '';
   } catch (err) {
+    body.className = 'state state--error';
     body.textContent = '读取失败：' + (err.message || err);
   }
 }

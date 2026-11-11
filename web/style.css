@@ -101,6 +101,8 @@
 
 /* 手动深色主题（设置里选「深色」时生效，覆盖系统偏好）（#15.1） */
 :root[data-theme="dark"] {
+  color-scheme: dark;
+
   --bg: #16181a;
   --bg-side: #1b1e20;
   --fg: #e4e0d8;
@@ -125,7 +127,15 @@
   --mask-scrim: rgb(0, 0, 0);
 }
 
+/* :root 的 color-scheme: light dark 只跟系统偏好走，不同步手动主题；
+   不补这两处会出现「手动浅色 + 系统深色」（或反向）时原生 select / date 配色错配。 */
+:root[data-theme="light"] { color-scheme: light; }
+
 /* ---------------- 基础 ---------------- */
+/* UA 的 [hidden] 是 display:none 且不带 !important，会被组件里的 display:flex 覆盖
+   （Edge 157 实测：.form-row[hidden] 仍算成 flex，新建笔记弹窗「标题 / 日期」两行常显）。
+   统一兜底，组件不再各补一条。 */
+[hidden] { display: none !important; }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -141,7 +151,6 @@ a { color: var(--accent); }
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
 }
 
 /* 滚动条跟着主题走，避免系统灰条破坏纸感 */
@@ -249,7 +258,6 @@ a { color: var(--accent); }
   border-radius: var(--radius);
   box-shadow: 0 12px 28px color-mix(in srgb, var(--shadow-popover) 14%, transparent);
 }
-.more-menu[hidden] { display: none; }
 .more-menu .quick {
   display: block;
   width: 100%;
@@ -272,7 +280,6 @@ a { color: var(--accent); }
   border: none;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
-  outline: none;
 }
 .searchbox input::placeholder { color: var(--faint); }
 .searchbox input:focus { border-bottom-color: var(--accent); }
@@ -419,7 +426,6 @@ a { color: var(--accent); }
 .tag-node:hover .tag-open,
 .tag-node:focus-within .tag-open { opacity: 1; }
 .tag-node .tag-open:hover { text-decoration: underline; }
-.tag-children[hidden] { display: none; }
 
 /* 提示条（同名笔记 / 大文件 / 迁移 / 错误）
    用绝对定位图标而不是 flex：内容里可能混排文字、链接和按钮，flex 会把它们拆成独立 item */
@@ -799,7 +805,6 @@ body.wide .file-layout .wrap { max-width: none; flex: 1 1 auto; }
   color: var(--fg);
   font: inherit;
   font-size: var(--fs-md);
-  outline: none;
 }
 .quick-add::placeholder { color: var(--faint); }
 .quick-add:focus { border-bottom-style: solid; border-bottom-color: var(--accent); }
@@ -826,7 +831,8 @@ body.wide .file-layout .wrap { max-width: none; flex: 1 1 auto; }
   background: color-mix(in srgb, var(--accent) 4%, transparent);
 }
 .day.today .day-head .date { color: var(--accent); }
-.day.past { opacity: .55; }
+/* 过去日不再整块降权：.slots li.past 已有 .45，父子 opacity 相乘会到 ≈.25 几乎读不了。
+   条目置灰由 li.past 独占，日期标题保持正常色以维持层级。 */
 .day.collapsed .slots,
 .day.collapsed .unrec { display: none; }
 .day-head .day-caret {
@@ -934,7 +940,8 @@ table.todos .done-at {
   white-space: nowrap;
 }
 table.todos tr.sentinel td { height: 1px; padding: 0; border: none; }
-table.todos tbody tr[data-path] { content-visibility: auto; contain-intrinsic-size: 0 42px; }
+/* content-visibility 只适用于可应用 size containment 的元素，tr 是内部表格元素，
+   该声明无效。待办表本就有 limit，无长列表渲染压力，勿再加回。 */
 
 .col-resizer {
   position: absolute;
@@ -1009,8 +1016,39 @@ table.todos th { position: relative; }
 }
 .results mark { padding: 0 1px; background: var(--mark); color: inherit; border-radius: 2px; }
 .more-bar { display: flex; align-items: center; gap: 10px; padding: 12px 0 0; }
-.backlinks { margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
-.backlinks .results li { padding: 8px 4px; }
+/* ---------------- 入链 / 出链 ----------------
+   两个面板共用一条顶部分隔线：第二个不再重复画线，标题也不再各带一条下划线，
+   否则页尾会被切成一串表格行。可点条目用左侧细竖线给线索，替代 4% 的弱 hover 底色。 */
+.backlinks { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.backlinks + .backlinks { margin-top: 20px; padding-top: 0; border-top: 0; }
+.backlinks .section-head { margin-bottom: 6px; padding-bottom: 0; border-bottom: 0; }
+.backlinks .results li {
+  position: relative;
+  padding: 8px 4px 8px 12px;
+  cursor: default;
+}
+.backlinks .results li:last-child { border-bottom: 0; }
+.backlinks .results li.is-link { cursor: pointer; }
+.backlinks .results li.is-link::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.backlinks .results li.is-link:hover::before,
+.backlinks .results li.is-link:focus-visible::before { opacity: .6; }
+.backlinks .results .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.backlinks .results .snippet { font-size: var(--fs-md); line-height: 1.6; }
+.backlinks .results .arrow { margin: 0 6px; color: var(--faint); }
+.backlinks .wikilink { color: var(--accent); border-bottom: 1px dashed var(--line); }
+.backlinks .wikilink.missing { color: var(--faint); border-bottom-color: var(--faint); }
+/* 页尾的空/错/加载三态复用 .state，但不要首页那种 40px 居中大留白 */
+.backlinks .state { padding: 10px 4px; text-align: left; }
 
 .history-list { list-style: none; margin: 0; padding: 0; }
 .history-list li {
@@ -1242,7 +1280,7 @@ pre.patch {
   font-size: var(--fs-md);
 }
 .form-row input:focus,
-.form-row select:focus { border-color: var(--accent); outline: none; }
+.form-row select:focus { border-color: var(--accent); }
 .form-row .todo-filter,
 .form-row .quick-add { flex: 1; width: auto; max-width: none; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
@@ -1335,9 +1373,6 @@ pre.patch {
   line-height: 1.5;
   white-space: normal;
 }
-/* 显式兜底：避免以后给 .git-notice 加 display 时把 UA 的 [hidden] 覆盖掉 */
-.git-notice[hidden] { display: none; }
-
 /* 主动作：每个 section 至多一个，不与 .seg 的筛选/切换同形 */
 .action {
   padding: 5px 14px;
@@ -1355,9 +1390,8 @@ pre.patch {
 .action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* D1 = A：日程表单默认折叠，点「添加日程」展开。
-   用 .is-open 单一开关控制 display：若改用 [hidden]，UA 的 display:none 会被
-   .schedule-add { display:flex } 覆盖而失效（项目里 .more-menu[hidden] 就是显式补写的先例）。
-   display 本身不可过渡，所以展开只用 animation 做一次性淡入（仅 opacity），收起即时隐藏。 */
+   用 .is-open 单一开关控制 display：不能改用 [hidden]，全局兜底会置 display:none，
+   而 display 变化不可过渡，展开动画（仅 opacity）不会触发；收起即时隐藏。 */
 .schedule-add { display: none; }
 .schedule-add.is-open {
   display: flex;
