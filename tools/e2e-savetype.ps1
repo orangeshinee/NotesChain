@@ -13,6 +13,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# playwright-cli 输出 UTF-8，Windows 控制台默认 GB2312；不改这里，管道会把中文 status
+# 解成乱码，使下面「已保存」的 -like 恒为 false（业务断言值其实全对）。只对齐接收解码。
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 $js = @'
 (async () => {
   const btn = Array.from(document.querySelectorAll('.doc-head .seg')).find((x) => x.textContent.trim() === '编辑');
