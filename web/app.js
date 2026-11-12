@@ -23,6 +23,10 @@ const state = {
   largeAssets: [],
   expandedTags: new Set(),
   leafEls: new Map(),
+  // 首页日历：翻月状态放 state，showHome 全量重建时不丢（需求文档 §4.1）
+  calYear: null,
+  calMonth: null,
+  calPinned: false,
 };
 
 let currentEditor = null;
@@ -402,6 +406,213 @@ async function refreshTodoSection() {
     /* 保持原样 */
   }
 }
+// ---------------------------------------------------------------- 首页日历
+// 需求文档：docs/requirements-calendar.md（v1.1）
+// 日期 -> path 映射只认规范路径日记。FileItem 无 date 字段，非规范路径（靠
+// `# YYYY-MM-DD` 标题判定）取不到「日」，按文档 §6 明确不覆盖。
+
+const CAL_WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+
+function calPad(n) { return String(n).padStart(2, '0'); }
+function calKey(y, m, d) { return `${y}-${calPad(m)}-${calPad(d)}`; }
+
+// 前端同时校验形态与真实日期。后端 is_iso_date 只验形态（文档 §4.4 两类失效）。
+function calValidDate(key) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return false;
+  const [y, m, d] = key.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+function calDiaryMap(files) {
+  const map = new Map();
+  for (const g of (files && files.groups) || []) {
+    if (g.kind !== 'diary') continue;
+    for (const year of g.years || []) {
+      for (const month of year.months || []) {
+        for (const entry of month.entries || []) {
+          const stem = String(entry.path || '').split('/').pop().replace(/\.md$/, '');
+          if (!calValidDate(stem)) continue;
+          // 分组与文件名一致才采信，避免跨月错位
+          if (stem.slice(0, 4) !== String(year.year) || stem.slice(5, 7) !== String(month.month)) continue;
+          map.set(stem, entry.path);
+        }
+      }
+    }
+  }
+  return map;
+}
+
+function calTodayParts() {
+  const now = new Date();
+  return { y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() };
+}
+
+function calEnsureView() {
+  const ok = state.calPinned && Number.isInteger(state.calYear) && Number.isInteger(state.calMonth)
+    && state.calMonth >= 1 && state.calMonth <= 12 && state.calYear >= 1 && state.calYear <= 9999;
+  if (ok) return;
+  const t = calTodayParts();
+  state.calYear = t.y;
+  state.calMonth = t.m;
+  state.calPinned = false;
+}
+
+function calShift(delta) {
+  calEnsureView();
+  let y = state.calYear;
+  let m = state.calMonth + delta;
+  if (m < 1) { m = 12; y -= 1; }
+  else if (m > 12) { m = 1; y += 1; }
+  state.calYear = y;
+  state.calMonth = m;
+  state.calPinned = true;
+  calRefresh();
+}
+
+function calResetToday() {
+  state.calPinned = false;
+  calEnsureView();
+  calRefresh();
+}
+
+// 翻月只替换侧栏里的日历本体，不重建首页（避免冲掉待办区与滚动位置）
+function calRefresh() {
+  const mount = document.getElementById('calendar-mount');
+  if (!mount) return;
+  mount.replaceChildren(buildCalendar(state.files));
+}
+
+// state.files 为 null 时异步补一次，不阻塞首页渲染（文档 §4.1 异常兜底）
+let calRetrying = false;
+function calRetryFiles() {
+  if (calRetrying) return;
+  calRetrying = true;
+  api('/api/files').then((files) => {
+    state.files = files;
+    calRefresh();
+  }).catch(() => {
+    const hint = document.querySelector('.calendar .calendar-empty');
+    if (hint) hint.textContent = '文件列表加载失败，刷新页面可重试';
+  }).finally(() => { calRetrying = false; });
+}
+
+async function calOpen(day) {
+  const key = calKey(state.calYear, state.calMonth, day);
+  if (!calValidDate(key)) {
+    window.alert(`日期无效：${key}`);
+    return;
+  }
+  const existing = calDiaryMap(state.files).get(key);
+  if (existing) {
+    // 已有日记直接用 entry.path，不用日期重拼（文档 §4.2）
+    go('/file/' + encodeURIComponent(existing));
+    return;
+  }
+  if (!window.confirm(`「${key}」还没有日记，要新建吗？`)) return;
+  try {
+    const res = await api('/api/notes/new', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: key }),
+    });
+    await loadSidebar();
+    // 新建用响应返回的 path，同样不重拼
+    go('/file/' + encodeURIComponent(res.path));
+  } catch (err) {
+    if (err && err.status === 409 && err.code === 'conflict') {
+      // 已被其他端创建：刷新后跳转，不报错。兜底路径即后端刚生成的规范路径。
+      await loadSidebar().catch(() => null);
+      const fresh = calDiaryMap(state.files).get(key);
+      go('/file/' + encodeURIComponent(fresh || `${key.slice(0, 4)}/${key.slice(5, 7)}/${key}.md`));
+      return;
+    }
+    window.alert('新建失败：' + (err.message || err));
+  }
+}
+
+function buildCalendar(files) {
+  calEnsureView();
+  const y = state.calYear;
+  const m = state.calMonth;
+  const today = calTodayParts();
+  const todayKey = calKey(today.y, today.m, today.d);
+  const map = calDiaryMap(files);
+  const card = el('section', 'calendar');
+
+  const head = el('div', 'calendar-head');
+  head.append(el('span', 'calendar-title', `${y} 年 ${m} 月`));
+  const nav = el('div', 'calendar-nav');
+  const prev = el('button', 'cal-btn', '‹');
+  prev.type = 'button';
+  prev.title = '上一月';
+  prev.addEventListener('click', () => calShift(-1));
+  const home = el('button', 'cal-btn', '今天');
+  home.type = 'button';
+  home.addEventListener('click', calResetToday);
+  const next = el('button', 'cal-btn', '›');
+  next.type = 'button';
+  next.title = '下一月';
+  next.addEventListener('click', () => calShift(1));
+  nav.append(prev, home, next);
+  head.append(nav);
+  card.append(head);
+
+  if (!files) {
+    card.append(el('div', 'calendar-empty', '文件列表未加载，日历暂不可用'));
+    calRetryFiles();
+    return card;
+  }
+
+  const week = el('div', 'calendar-week');
+  for (const w of CAL_WEEKDAYS) week.append(el('span', 'calendar-weekday', w));
+  card.append(week);
+
+  const grid = el('div', 'calendar-grid');
+  const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7; // 周一为一周起点
+  const days = new Date(y, m, 0).getDate();
+  for (let i = 0; i < lead; i++) grid.append(el('span', 'calendar-cell calendar-cell--blank'));
+  for (let d = 1; d <= days; d++) {
+    const key = calKey(y, m, d);
+    const cell = el('button', 'calendar-cell', String(d));
+    cell.type = 'button';
+    if (map.has(key)) {
+      cell.classList.add('calendar-cell--has');
+      cell.title = `${key} 有日记`;
+    } else {
+      cell.title = `${key} 无日记，点击新建`;
+    }
+    if (key === todayKey) cell.classList.add('calendar-cell--today');
+    cell.addEventListener('click', () => calOpen(d));
+    grid.append(cell);
+  }
+  card.append(grid);
+  return card;
+}
+
+// 侧栏日历：常驻、可折叠，折叠状态本地持久化（与「宽屏」等设置一致）
+const CAL_OPEN_KEY = 'nc.calendarOpen';
+function initSidebarCalendar() {
+  const panel = document.getElementById('calendar-panel');
+  if (!panel) return;
+  try {
+    const saved = localStorage.getItem(CAL_OPEN_KEY);
+    if (saved !== null) panel.open = saved === '1';
+  } catch (err) {
+    /* 隐私模式下 localStorage 可能不可用，保持默认展开 */
+  }
+  panel.addEventListener('toggle', () => {
+    try {
+      localStorage.setItem(CAL_OPEN_KEY, panel.open ? '1' : '0');
+    } catch (err) {
+      /* ignore */
+    }
+  });
+  calRefresh();
+}
+
+// ---------------------------------------------------------------- 首页视图
+
 async function showHome(preserveScroll) {
   const mySeq = ++state.viewSeq;
   const keepScroll = preserveScroll ? main.scrollTop : 0;
@@ -432,6 +643,7 @@ async function showHome(preserveScroll) {
     const parts = [];
     if (schedule) parts.push(buildSchedule(schedule));
     parts.push(buildTodoSection(todos, () => { state.todoLimit = 50000; showHome(); }));
+    // 首页恢复单列全宽；月历常驻左侧栏，不占主内容宽度（需求文档 §4.0）
     wrap.replaceChildren(...parts);
     main.replaceChildren(docHead('首页', `未完成 ${todos.total} 条`), wrap);
     if (preserveScroll) {
@@ -1675,6 +1887,7 @@ async function loadSidebar() {
   state.tags = tags;
   renderFileTree(files);
   renderTagTree(tags.tree);
+  calRefresh(); // 侧栏日历随文件列表刷新，新建日记后立即打点
 }
 
 function renderFileTree(data) {
@@ -2587,11 +2800,13 @@ window.addEventListener('keydown', (event) => {
 document.addEventListener('click', (event) => {
   if (window.innerWidth > 860) return;
   const target = event.target;
-  if (target && (target.closest('.tree .leaf') || target.closest('.tag-node') || target.closest('.quick'))) {
+  if (target && (target.closest('.tree .leaf') || target.closest('.tag-node')
+    || target.closest('.quick') || target.closest('.calendar-cell'))) {
     closeSidebar();
   }
 });
 async function boot() {
+  initSidebarCalendar(); // 独立于接口结果：失败时仍渲染空日历并触发 calRetryFiles 兜底
   try {
     applyAppearance(); // 先应用字体/字号/主题，避免首屏闪烁
     try {
