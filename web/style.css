@@ -761,7 +761,100 @@ body.wide .file-layout .wrap { max-width: none; flex: 1 1 auto; }
 .unrec .muted { color: var(--faint); }
 .muted { color: var(--faint); }
 
-/* ---------------- 首页 ---------------- */
+/* ---------------- 侧栏月历 ---------------- */
+/* 月历常驻左侧栏、可折叠（需求文档 §4.0）。侧栏宽 264px，不设独立卡片外框，
+   直接沿用侧栏底色；颜色只走 :root。首页保持单列全宽，不留右侧空白。 */
+.panel-calendar > details > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  list-style: none;
+  cursor: pointer;
+}
+.panel-calendar > details > summary::-webkit-details-marker { display: none; }
+.panel-calendar > details > summary::before {
+  content: "▸";
+  flex: none;
+  font-size: 9px;
+  color: var(--faint);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.panel-calendar > details[open] > summary::before { transform: rotate(90deg); }
+.panel-calendar > details > summary:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.calendar { padding: 2px 4px 6px; }
+.calendar-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.calendar-title {
+  font-family: var(--font-read);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.calendar-nav { margin-left: auto; display: flex; gap: 3px; }
+.cal-btn {
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+.cal-btn:hover { background: var(--accent-soft); color: var(--accent); }
+
+.calendar-week,
+.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+.calendar-weekday {
+  text-align: center;
+  padding: 2px 0 4px;
+  font-size: var(--fs-meta);
+  color: var(--faint);
+}
+.calendar-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+.calendar-cell--blank { cursor: default; }
+.calendar-cell:not(.calendar-cell--blank):hover { background: var(--line-soft); }
+/* 有日记：高亮 + 底部打点 */
+.calendar-cell--has { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.calendar-cell--has::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+/* 今天：独立描边，与「有日记」的高亮互不覆盖 */
+.calendar-cell--today { border-color: var(--accent); }
+.calendar-empty { padding: 10px 2px; font-size: var(--fs-sm); color: var(--faint); }
+
 .section-head {
   display: flex;
   flex-wrap: wrap;

@@ -6,7 +6,10 @@ NotesChain：单文件 Rust（Axum）+ 原生 JS 的本地 Markdown 笔记工具
 
 1. **构建**：`cargo build --release`
    - 若改了 `web/src/editor.js`，必须先 `cd web; npm run build; cd ..`，否则内嵌的是旧包
-2. **验证**：`pwsh -File tools/release-gate.ps1`，全绿再提交
+2. **验证**：按平台选一条，全绿再提交
+   - Windows：`pwsh -File tools/release-gate.ps1`
+   - Linux / macOS：`bash tools/release-gate.sh`
+   - 两者覆盖不同，见 [docs/agents/testing.md](docs/agents/testing.md#按平台选闸门)；最小契约是 `.github/workflows/ci.yml` 的 `check` job（build / test / clippy / 二进制可用性）
 3. **红线**：**绝不改写已有笔记文件**；只有新建文件才写模板
 
 ## 按需阅读
