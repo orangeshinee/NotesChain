@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# 发布闸门（Linux / macOS）：一条命令跑完 CI 的 Linux 契约 + 服务接口冒烟。
+# 发布闸门（Linux / macOS）：一条命令跑完 CI 的 Linux 契约 + 服务只读检查。
 # 用法：bash tools/release-gate.sh [-p 端口]
 #
 # 与 Windows 版 tools/release-gate.ps1 的关系：
 #   - 本脚本覆盖 .github/workflows/ci.yml 的 check job（Linux 侧）全部四项，
-#     外加一次真实服务启动 + 接口冒烟。
-#   - ps1 里的「边界场景 18 项 / 平替预演 20 项 / 浏览器交互」依赖 pwsh 与
-#     Windows 路径，Linux 上不跑；浏览器验证用 playwright 单独做。
+#     外加一次真实服务启动 + 只读接口检查。
+#   - ps1 的边界场景、平替预演、浏览器探针依赖 pwsh 与 Windows 路径，
+#     Linux 版不跑；前端交互验证需另用浏览器脚本或手工验证。
 #   - 前端资源是编译期内嵌的，所以 build 前额外校验 JS 语法与 CSS 括号平衡，
 #     避免语法错误被内嵌进二进制却只在运行时暴露。
+#   - 服务检查用隔离临时目录 + 唯一哨兵文件，断言响应确实来自本次启动的二进制，
+#     否则端口被占用时会把别的实例当成被测对象（假绿）。
 
 set -uo pipefail
 
@@ -18,7 +20,12 @@ cd "$repo" || exit 1
 PORT=18099
 while [ $# -gt 0 ]; do
   case "$1" in
-    -p|--port) PORT="${2:-18099}"; shift 2 ;;
+    -p|--port)
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
+        echo "缺少端口值：-p <端口>" >&2
+        exit 2
+      fi
+      PORT="$2"; shift 2 ;;
     -h|--help) echo "用法: bash tools/release-gate.sh [-p 端口]"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
@@ -39,15 +46,23 @@ record() {
 
 # 输出重定向到临时日志再判退出码，避免管道截断造成 SIGPIPE 假失败
 TMP="$(mktemp -d)"
+if [ -z "$TMP" ] || [ ! -d "$TMP" ]; then
+  echo "无法创建临时目录（TMPDIR 不可写？）" >&2
+  exit 1
+fi
 srv_pid=""
+cleanup_done=0
 cleanup() {
+  [ "$cleanup_done" -eq 1 ] && return
+  cleanup_done=1
   if [ -n "$srv_pid" ] && kill -0 "$srv_pid" 2>/dev/null; then
     kill "$srv_pid" 2>/dev/null
     wait "$srv_pid" 2>/dev/null
   fi
-  rm -rf "$TMP"
+  [ -n "$TMP" ] && [ -d "$TMP" ] && rm -rf "$TMP"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT TERM
 
 echo "=== 0. 前端静态检查 ==="
 node --check web/app.js > "$TMP/js.log" 2>&1
@@ -85,38 +100,56 @@ echo "=== 4. 二进制可用性（CI 契约） ==="
 code=$?
 record "noteschain --version" "$code" "$(cat "$TMP/ver.log")"
 "$exe" --help > /dev/null 2>&1
-record "noteschain --help" $? "exit=$?"
+code=$?
+record "noteschain --help" "$code" "exit=$code"
 
-echo "=== 5. 服务接口冒烟（临时目录，不碰真实笔记库） ==="
+echo "=== 5. 服务只读检查（隔离临时目录 + 哨兵） ==="
 notes="$TMP/notes"
+sentinel="gate-sentinel-$$.md"
 mkdir -p "$notes/raw" || exit 1
+printf '# gate sentinel\n' > "$notes/raw/$sentinel"
 "$exe" --dir "$notes" --port "$PORT" --no-token --no-git > "$TMP/server.log" 2>&1 &
 srv_pid=$!
 ready=0
 for _ in $(seq 1 40); do
+  # 本进程若已退出（例如端口被占用导致 bind 失败），立刻停止等待
+  if ! kill -0 "$srv_pid" 2>/dev/null; then break; fi
   if curl -fsS "http://127.0.0.1:$PORT/api/files" > "$TMP/files.json" 2>/dev/null; then ready=1; break; fi
   sleep 0.25
 done
-if [ "$ready" -eq 1 ]; then
-  record "服务启动 + /api/files" 0 "port=$PORT"
-  python3 - "$TMP/files.json" <<'PY' > "$TMP/json.log" 2>&1
+
+# curl 200 只说明「有人答话」，不代表是本次构建的二进制。
+# 三重确认：进程存活、无 bind 错误、响应含本次哨兵。
+alive=0
+kill -0 "$srv_pid" 2>/dev/null && alive=1
+bind_err=0
+grep -qiE 'address already in use|os error 98' "$TMP/server.log" && bind_err=1
+if [ "$ready" -eq 1 ] && [ "$alive" -eq 1 ] && [ "$bind_err" -eq 0 ]; then
+  record "被测服务进程存活" 0 "pid=$srv_pid port=$PORT"
+else
+  record "被测服务进程存活" 1 "ready=$ready alive=$alive bind_err=$bind_err $(tail -2 "$TMP/server.log" | tr '\n' ' ')"
+fi
+
+# 决定性断言：哨兵只存在于本次临时目录，别的实例不可能回显它
+python3 - "$TMP/files.json" "$sentinel" <<'PY' > "$TMP/sentinel.log" 2>&1
 import json, sys
 with open(sys.argv[1], encoding='utf-8') as f:
-    d = json.load(f)
+    raw = f.read()
+d = json.loads(raw)
 assert 'groups' in d, 'missing groups'
-print('groups =', [g.get('kind') for g in d['groups']])
+assert sys.argv[2] in raw, 'sentinel missing: response did not come from this instance'
+print('groups =', [g.get('kind') for g in d['groups']], '| sentinel =', sys.argv[2])
 PY
-  record "/api/files JSON 结构" $? "$(cat "$TMP/json.log")"
-  curl -fsS "http://127.0.0.1:$PORT/api/config" > "$TMP/config.json" 2>/dev/null
-  record "/api/config" $? "exit=$?"
-  curl -fsS "http://127.0.0.1:$PORT/" > "$TMP/index.html" 2>/dev/null
-  code=$?
-  has_cal=0
-  [ "$code" -eq 0 ] && grep -q 'calendar-mount' "$TMP/index.html" && has_cal=1
-  record "首页内嵌 calendar-mount" $((1 - has_cal)) "found=$has_cal"
-else
-  record "服务启动 + /api/files" 1 "$(tail -3 "$TMP/server.log" | tr '\n' ' ')"
-fi
+record "sentinel 响应来自本实例" $? "$(cat "$TMP/sentinel.log")"
+
+curl -fsS "http://127.0.0.1:$PORT/api/config" > "$TMP/config.json" 2>/dev/null
+code=$?
+record "/api/config" "$code" "exit=$code"
+curl -fsS "http://127.0.0.1:$PORT/" > "$TMP/index.html" 2>/dev/null
+code=$?
+has_cal=0
+[ "$code" -eq 0 ] && grep -q 'calendar-mount' "$TMP/index.html" && has_cal=1
+record "首页内嵌 calendar-mount" $((1 - has_cal)) "found=$has_cal"
 
 echo
 echo "===== 汇总 ====="

@@ -1,8 +1,8 @@
 # 需求文档：侧栏可折叠月历组件
 
-状态：v1.3 实现完成（布局按用户反馈调整）。Q1–Q5 已由用户确认；实现与端到端验证见第 9 节。
+状态：v1.4 实现完成 + review 修复完成。Q1–Q5 已由用户确认；实现与端到端验证见第 9 节，review findings 与修复见第 10 节。
 
-修订历史：v1.1 修正 3 处会导致实现写错的设计问题、4 处事实与行号错误，补齐项目文档同步约定；v1.2 据实测修正 §4.1 / §4.4 / §6 对日期判定与孤儿文件的描述；v1.3 用户看过首页两列方案的实机截图后指出空白太多，改为侧栏可折叠方案（§4.0）。
+修订历史：v1.1 修正 3 处会导致实现写错的设计问题、4 处事实与行号错误，补齐项目文档同步约定；v1.2 据实测修正 §4.1 / §4.4 / §6 对日期判定与孤儿文件的描述；v1.3 用户看过首页两列方案的实机截图后指出空白太多，改为侧栏可折叠方案（§4.0）；v1.4 落地后的 review 修复与红/绿回归（§10）。
 
 ## 1. 背景与痛点
 
@@ -15,6 +15,8 @@
 ## 2. 现状核查（静态读码 + 运行时实测）
 
 以下结论来自 2026-11 的代码阅读与端到端实测，行号基准固定为 `5b01461`（master HEAD at review time）。实现阶段已用临时笔记目录启动真实服务，POST 验证过接口产物，详见第 9 节。
+
+> **行号是历史快照，不是当前定位方式**。该表及后文所有 `web/app.js:NNN` / `web/style.css:NNN` 都指向 `5b01461`；实现提交在 `app.js` 里新增了两百多行日历代码，当前工作树的行号已整体后移，按这些数字查到的会是不相干的函数。当前实现请按函数名检索：`loadSidebar()` / `showHome()` / `calOpen()` / `calNavigate()` / `route()` / `api()` / `todayPath()`。`src/api.rs` 与 `src/index.rs` 后端零改动，行号仍有效。
 
 | 项 | 结论 | 证据 |
 |---|---|---|
@@ -189,11 +191,33 @@ Q1–Q5 全部已确认，无遗留待决事项。
 | 真实浏览器布局（v1.2 两列方案） | 本机 Chrome 145 + playwright，3 视口 | 29 项中 28 通过；唯一失败是浏览器自动请求 `/favicon.ico` 的 404，服务端本就无该路由，与代码无关，排除后 28/28 |
 | 真实浏览器布局（**v1.3 侧栏方案，当前**） | Chrome 145 + playwright，1440×900 / 820×1180 / 375×812，量 bounding box + 截图人工复核 | **33/33**：日历挂在侧栏 `#calendar-mount`、首页单列全宽（日程区 780px）、与日程不重叠、无横向溢出；折叠 / 展开 + `localStorage` 持久化 + 刷新后保持；翻月 / 回今天 / `entry.path` 跳转 / 回首页日历仍在；窄屏抽屉随之收起、点汉堡打开；主内容铺满 375 / 820px |
 | 侧栏方案截图复核 | 桌面、折叠态、375px 抽屉打开三张截图人工看 | 日历在侧栏、折叠箭头可见、收起后侧栏紧凑文件树上移、无异常留白；窄屏抽屉内日历完整无裁切 |
-| 提交前闸门 | `bash tools/release-gate.sh`（同批次补齐的 Linux 版闸门） | 11/11 全绿，exit 0：前端静态检查、build `--locked`、`cargo test` 66 passed、clippy `-D warnings` 零警告、二进制可用性、临时目录服务接口冒烟 |
-| 闸门负向测试 | 副本里注入 CSS 语法错误 | 闸门变红、exit 1、7 项 FAIL，确认不是「假绿」 |
+| 提交前闸门（旧闸门） | `bash tools/release-gate.sh` 初版 | 11/11 全绿，exit 0。**该结果后来被 review 判定无效**：端口占用时会假绿，见下方 §10 |
+| 闸门负向测试（旧闸门） | 副本里注入 CSS 语法错误 | 闸门变红、exit 1、7 项 FAIL；只证明静态检查能红，未覆盖服务冒烟段 |
 
 注：v1.3 测试里「收起后日历不可见」一度报错，查明是 Chrome 145 对 `<details>` 收起内容保留布局尺寸，`getBoundingClientRect()` 仍有高度，须用 `checkVisibility()` 判可见性。产品代码无需改动，测试断言已修正。
 
 **验收标准对照**：第 1–14 条全部已验证。
 
-**提交**：功能与 Linux 闸门分两个提交（一个改动一个提交，见 `docs/agents/workflow.md`）；只做本地提交，未 push、未开 PR。
+## 10. Review findings 与修复（v1.4）
+
+实现与闸门作为两个本地提交落地后，按 `check` 做了 Standard→Deep 只读 review（两名 specialist 并行 + 逐条复核）。确认 1 CRITICAL、1 HIGH、若干 MEDIUM/LOW，并写了一份红/绿复现 harness（`nc_fix_harness.py`，真实 Chrome + 真实二进制）。
+
+**修复前红 6/14**（闸门 3/7、前端 3/7），**修复后绿 14/14**（闸门 7/7、前端 7/7）。以下每条都在修复前实测复现过，不是静态推测。
+
+| 严重度 | 问题 | 修复 |
+|---|---|---|
+| CRITICAL | `tools/release-gate.sh` 端口被占用时 curl 命中别的实例，仍报 11/11 全绿、exit 0（刚构建的二进制 HTTP 层根本没被测） | 三重确认：进程 `kill -0` 存活、无 `Address already in use` 绑定错误、隔离临时目录放唯一哨兵文件并断言它出现在 `/api/files` 响应里；删掉硬编码 PASS |
+| HIGH | 窄屏点「无日记」日期并取消新建，抽屉被 `document` 点击委托无条件关闭；点空白格同样误关 | 从委托移除 `.calendar-cell`，改为只在 `calNavigate()` 真正跳转时收抽屉 |
+| MEDIUM | 新建 POST 已成功，但 `go()` 排在 `await loadSidebar()` 之后，侧栏刷新接口一失败就误报「新建失败」且不跳转（文件其实已建好） | 先 `calNavigate(res.path)`，刷新改为 `await loadSidebar().catch(() => null)` 尽力而为 |
+| MEDIUM | `calRetryFiles` 旧快照晚到会覆盖较新的 `state.files`，导致当天打点消失 | 加 `calFilesSeq` 新鲜度序号，`loadSidebar()` 成功后推进，旧响应丢弃 |
+| MEDIUM | `trap cleanup EXIT INT TERM` 的 handler 不 exit，收到 SIGINT 后仍打印「全部通过」并 exit 0 | `trap 'cleanup; exit 130' INT TERM` + `trap cleanup EXIT`，cleanup 幂等 |
+| MEDIUM | 闸门注释写死检查数量、`testing.md` 把 Linux 4 个只读 GET 与 Windows `smoke.ps1` 同名「接口冒烟」，易把 Linux 全绿读成等价 | 清掉数量，改称「只读接口检查」，`testing.md` 明确写出三层覆盖差异与「Linux 闸门无任何浏览器层」 |
+| LOW | `-p` 漏传值死循环；`mktemp -d` 失败时 `$TMP` 空串会写到根目录；`calOpen` 无重入锁 | 参数 arity 校验、TMP 非空校验、`calOpening` 锁 |
+
+**排除的指控**（复核后不成立，未修）：`month` 是补零字符串，1–9 月不漏打点；409 兜底与后端 `ApiError::conflict` 精确匹配；`<details>` toggle 与 localStorage 无反馈循环；`files=null` 时 `buildCalendar` 直接返回空日历、不渲染日期格子，因此「files=null 时点日期重复新建」不可达。
+
+**修复后逐层重跑**：`cargo build --release --locked` / `cargo test --locked`（66 passed）/ `cargo clippy -D warnings`（0 警告）全绿；闸门 11/11（含哨兵）；harness 14/14；jsdom 15/15；纯函数 0 FAIL；真实 Chrome 三视口 33/33；确认新建链路通过。另做负向测试：端口占用 → 闸门 exit 1；注入 CSS 错误 → exit 1；`-p` 缺参 → exit 2；SIGINT → exit 130。
+
+**行号引用**：见 §2 的历史快照警告，当前实现按函数名定位。
+
+**提交**：功能与 Linux 闸门分两个提交，review 修复作为第三个独立提交；均只做本地提交，未 push、未开 PR。

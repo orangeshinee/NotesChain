@@ -484,11 +484,16 @@ function calRefresh() {
 }
 
 // state.files 为 null 时异步补一次，不阻塞首页渲染（文档 §4.1 异常兜底）
+// filesSeq 是新鲜度序号：loadSidebar 成功会推进它，重试的旧快照晚到时丢弃，
+// 避免覆盖较新的 state.files（boot 早期这次请求早于 /api/daily 建当天日记）。
 let calRetrying = false;
+let calFilesSeq = 0;
 function calRetryFiles() {
   if (calRetrying) return;
   calRetrying = true;
+  const seq = calFilesSeq;
   api('/api/files').then((files) => {
+    if (seq !== calFilesSeq) return;
     state.files = files;
     calRefresh();
   }).catch(() => {
@@ -497,7 +502,18 @@ function calRetryFiles() {
   }).finally(() => { calRetrying = false; });
 }
 
+// 只有真正发生跳转时才收起窄屏抽屉。取消新建、点空白格都不该收
+// （委托在 document 上无法区分「取消」和「跳转」，故收进导航函数里）
+function calNavigate(path) {
+  go('/file/' + encodeURIComponent(path));
+  if (window.innerWidth <= 860) closeSidebar();
+}
+
+// 防止 POST 在途时重复点击造成重复弹窗与重复新建（后端 409 只兜底，不兜体验）
+let calOpening = false;
+
 async function calOpen(day) {
+  if (calOpening) return;
   const key = calKey(state.calYear, state.calMonth, day);
   if (!calValidDate(key)) {
     window.alert(`日期无效：${key}`);
@@ -506,28 +522,31 @@ async function calOpen(day) {
   const existing = calDiaryMap(state.files).get(key);
   if (existing) {
     // 已有日记直接用 entry.path，不用日期重拼（文档 §4.2）
-    go('/file/' + encodeURIComponent(existing));
+    calNavigate(existing);
     return;
   }
   if (!window.confirm(`「${key}」还没有日记，要新建吗？`)) return;
+  calOpening = true;
   try {
     const res = await api('/api/notes/new', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ date: key }),
     });
-    await loadSidebar();
-    // 新建用响应返回的 path，同样不重拼
-    go('/file/' + encodeURIComponent(res.path));
+    // 文件已建好就先跳转；侧栏刷新是尽力而为，失败不该报「新建失败」也不该挡住跳转
+    calNavigate(res.path);
+    await loadSidebar().catch(() => null);
   } catch (err) {
     if (err && err.status === 409 && err.code === 'conflict') {
       // 已被其他端创建：刷新后跳转，不报错。兜底路径即后端刚生成的规范路径。
       await loadSidebar().catch(() => null);
       const fresh = calDiaryMap(state.files).get(key);
-      go('/file/' + encodeURIComponent(fresh || `${key.slice(0, 4)}/${key.slice(5, 7)}/${key}.md`));
+      calNavigate(fresh || `${key.slice(0, 4)}/${key.slice(5, 7)}/${key}.md`);
       return;
     }
     window.alert('新建失败：' + (err.message || err));
+  } finally {
+    calOpening = false;
   }
 }
 
@@ -1885,6 +1904,7 @@ async function loadSidebar() {
   buildPathSet(files);
   state.files = files;
   state.tags = tags;
+  calFilesSeq += 1; // 让 boot 早期发出的 calRetryFiles 旧快照失效
   renderFileTree(files);
   renderTagTree(tags.tree);
   calRefresh(); // 侧栏日历随文件列表刷新，新建日记后立即打点
@@ -2801,7 +2821,7 @@ document.addEventListener('click', (event) => {
   if (window.innerWidth > 860) return;
   const target = event.target;
   if (target && (target.closest('.tree .leaf') || target.closest('.tag-node')
-    || target.closest('.quick') || target.closest('.calendar-cell'))) {
+    || target.closest('.quick'))) {
     closeSidebar();
   }
 });

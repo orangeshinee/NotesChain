@@ -6,12 +6,15 @@
 
 | 平台 | 命令 | 覆盖 |
 | --- | --- | --- |
-| Windows | `pwsh -File tools/release-gate.ps1` | 构建 → 单元测试 → clippy → 接口冒烟 → 边界场景 → 平替预演 → 浏览器交互 → Playwright e2e（可选） |
-| Linux / macOS | `bash tools/release-gate.sh` | 前端静态检查 → 构建 → 单元测试 → clippy `-D warnings` → 二进制可用性 → 服务接口冒烟 |
+| Windows | `pwsh -File tools/release-gate.ps1` | 构建 → 单元测试 → clippy → 接口冒烟（鉴权 / 扫描 / 回写 / 冲突）→ 边界场景 → 平替预演 → 浏览器交互 → Playwright e2e（可选） |
+| Linux / macOS | `bash tools/release-gate.sh` | 前端静态检查 → 构建 → 单元测试 → clippy `-D warnings` → 二进制可用性 → **只读接口检查**（`/api/files` / `/api/config` / 首页） |
 
-Linux 脚本的构建 / 测试 / clippy / 二进制四步与 `.github/workflows/ci.yml` 的 `check` job 一致，是跨平台的最小契约。它在临时目录起一次真实服务做接口冒烟，**不碰真实笔记库**，跑完自动清理。
+Linux 脚本的构建 / 测试 / clippy / 二进制四步与 `.github/workflows/ci.yml` 的 `check` job 一致，是跨平台的最小契约。服务检查在隔离临时目录起一次真实进程，用唯一哨兵文件断言响应确实来自本次启动的二进制（否则端口被占用会把别的实例当成被测对象，造成假绿），**不碰真实笔记库**，跑完自动清理。
 
-**覆盖差异，别把 Linux 全绿当成 Windows 全绿**：ps1 里的边界场景、平替预演、浏览器交互探针、`browser-probe.ps1` 场景在 Linux 版里都不跑。这些改动若涉及扫描/索引/文件判定/前端交互，还需在 Windows 侧补跑，或用 playwright 手工验证并在提交信息里写明步骤。
+**覆盖差异，别把 Linux 全绿当成 Windows 全绿**：
+- Linux 的「只读接口检查」是几个 `--no-token` 的 GET，不覆盖鉴权、扫描、回写、版本冲突；Windows 的 `smoke.ps1` 是带 token 的写操作冒烟。两者同名不同义，勿等同。
+- ps1 里的边界场景、平替预演、浏览器交互探针、`browser-probe.ps1` 场景在 Linux 版里都不跑。Linux 闸门**没有任何浏览器层**，前端交互改动还需另用浏览器脚本或手工验证，并在提交信息里写明步骤。
+- 这些改动若涉及扫描/索引/文件判定/前端交互，还需在 Windows 侧补跑。
 
 依次跑（Windows 版）：构建 → `cargo test` → `cargo clippy` → 接口冒烟 → 边界场景 → 平替预演 → 浏览器交互（逐场景）→ **Playwright e2e（可选层**，检测到 `playwright-cli` 才跑，否则记 SKIP）。输出汇总表，非零退出即失败。**提交前必须全绿。**
 
@@ -42,7 +45,7 @@ pwsh -File tools/browser-probe.ps1 -Url "http://127.0.0.1:8090/?token=..." -Hash
 
 ## 浏览器层的两种驱动
 
-- **CDP 探针**（`tools/browser-probe.ps1`）：直接开 Edge `--headless=new` 走 CDP，轻量、已覆盖 16 个场景。
+- **CDP 探针**（`tools/browser-probe.ps1`）：直接开 Edge `--headless=new` 走 CDP，轻量。
   局限：页面内 `setTimeout` 链在 headless 下可能被节流，`Runtime.evaluate(awaitPromise)` 会拿不到结果，
   涉及「等待若干秒」的时序用例不要放这里。
 - **Playwright**（`tools/e2e-savetype.ps1`）：需要真实等待/连续输入的时序用例用 `playwright-cli`，
